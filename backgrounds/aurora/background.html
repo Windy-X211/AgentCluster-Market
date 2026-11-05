@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="zh">
+
+<head>
+    <meta charset="UTF-8">
+    <title>极光</title>
+    <style>
+        html,
+        body {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            overflow: hidden;
+            background: transparent;
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+    </style>
+</head>
+
+<body>
+    <canvas id="c"></canvas>
+    <script>
+        (function () {
+            const cv = document.getElementById('c');
+            const ctx = cv.getContext('2d');
+            let W = 0, H = 0, dpr = Math.min(window.devicePixelRatio || 1, 2);
+            let bands = [], stars = [], t0 = performance.now();
+
+            // 极光色带：每条是一个正弦波动的垂直渐变带
+            const PALETTES = [
+                ['#00ff9d', '#00b894'],
+                ['#00d4ff', '#0066cc'],
+                ['#a855f7', '#6b21a8'],
+                ['#34d399', '#059669']
+            ];
+
+            function resize() {
+                W = window.innerWidth; H = window.innerHeight;
+                cv.width = W * dpr; cv.height = H * dpr;
+                cv.style.width = W + 'px'; cv.style.height = H + 'px';
+                ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            }
+
+            function init() {
+                bands = [];
+                const n = 5;
+                for (let i = 0; i < n; i++) {
+                    bands.push({
+                        cx: (i + 0.5) / n + (Math.random() - 0.5) * 0.1,
+                        amp: 60 + Math.random() * 80,
+                        freq: 0.003 + Math.random() * 0.004,
+                        speed: 0.0004 + Math.random() * 0.0006,
+                        phase: Math.random() * Math.PI * 2,
+                        width: 0.18 + Math.random() * 0.12,
+                        palette: PALETTES[i % PALETTES.length],
+                        opacity: 0.10 + Math.random() * 0.08
+                    });
+                }
+                // 少量背景星
+                stars = [];
+                for (let i = 0; i < 80; i++) {
+                    stars.push({
+                        x: Math.random() * W,
+                        y: Math.random() * H * 0.5,
+                        r: Math.random() * 0.9 + 0.2,
+                        a: Math.random() * Math.PI * 2,
+                        s: Math.random() * 0.02 + 0.004
+                    });
+                }
+            }
+
+            function frame() {
+                const t = performance.now() - t0;
+                ctx.clearRect(0, 0, W, H);
+                // 背景星
+                for (const st of stars) {
+                    st.a += st.s;
+                    ctx.globalAlpha = 0.3 + 0.4 * Math.sin(st.a);
+                    ctx.fillStyle = '#ffffff';
+                    ctx.beginPath();
+                    ctx.arc(st.x, st.y, st.r, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                // 极光带
+                ctx.globalAlpha = 1;
+                for (const b of bands) {
+                    const cx = b.cx * W;
+                    const halfW = b.width * W;
+                    ctx.save();
+                    ctx.globalCompositeOperation = 'lighter';
+                    const steps = 48;
+                    for (let s = 0; s < steps; s++) {
+                        const f = s / (steps - 1);
+                        const x = cx - halfW + f * halfW * 2;
+                        const wave = Math.sin(x * b.freq + t * b.speed + b.phase) * b.amp;
+                        const yTop = H * 0.15 + wave;
+                        const bandH = H * 0.7;
+                        const grad = ctx.createLinearGradient(x, yTop, x, yTop + bandH);
+                        const c1 = b.palette[0], c2 = b.palette[1];
+                        grad.addColorStop(0, c1);
+                        grad.addColorStop(0.5, c2);
+                        grad.addColorStop(1, 'rgba(0,0,0,0)');
+                        ctx.fillStyle = grad;
+                        ctx.globalAlpha = b.opacity * (1 - Math.abs(f - 0.5) * 2 * 0.7);
+                        ctx.fillRect(x, yTop, halfW * 2 / steps + 1, bandH);
+                    }
+                    ctx.restore();
+                }
+                ctx.globalAlpha = 1;
+                requestAnimationFrame(frame);
+            }
+
+            let resizeTimer = null;
+            window.addEventListener('resize', function () {
+                clearTimeout(resizeTimer);
+                resizeTimer = setTimeout(function () { resize(); init(); }, 150);
+            });
+            resize(); init(); requestAnimationFrame(frame);
+        })();
+    </script>
+</body>
+
+</html>

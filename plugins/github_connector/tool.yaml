@@ -1,0 +1,231 @@
+# github_connector 插件的 tool 定义 —— GitHub 连接
+
+identity:
+  name: "github_connector"
+  author: "AgentCluster"
+version: "0.1.0"
+
+description:
+  zh_Hans: |
+    GitHub 连接插件，通过 action 参数选择操作。所有操作返回 {ok, data, error?, code?} 结构。
+
+    ═══════════════════════════════════════════════════════
+    ★★★ 认证管理 ★★★
+    ═══════════════════════════════════════════════════════
+    set_token(token="ghp_xxx") — 设置 GitHub Personal Access Token（classic ghp_ 或 fine-grained github_pat_）
+    check_auth() — 验证当前令牌是否有效，返回用户名
+
+    ═══════════════════════════════════════════════════════
+    ★★★ 仓库搜索与元信息 ★★★
+    ═══════════════════════════════════════════════════════
+    search_repos(query="python web", language="python", sort="stars", per_page=30, page=1) — 搜索仓库
+    get_repo_info(repo="owner/repo") — 获取仓库元信息（stars/forks/默认分支/最近提交）
+
+    ═══════════════════════════════════════════════════════
+    ★★★ 远程项目信息读取 ★★★
+    ═══════════════════════════════════════════════════════
+    read_readme(repo="owner/repo", ref="main") — 读取 README 文件内容
+    list_files(repo="owner/repo", path="src", ref="main", recursive=false) — 列出目录文件
+    read_file(repo="owner/repo", path="package.json", ref="main") — 读取指定文件内容
+
+    ═══════════════════════════════════════════════════════
+    ★★★ 克隆与拉取 ★★★
+    ═══════════════════════════════════════════════════════
+    clone_repo(repo="owner/repo", dest="/path", branch="main", depth=1, protocol="https")
+    - dest 不存在或空 → clone；dest 已存在同仓库 → pull；非空非 Git → DEST_CONFLICT
+    - protocol: https（嵌入令牌，克隆后清理）/ ssh
+
+    ═══════════════════════════════════════════════════════
+    ★★★ 本地项目提交与建仓 ★★★
+    ═══════════════════════════════════════════════════════
+    create_repo(name="my-repo", description="...", private=true, auto_init=false) — 创建新仓库（默认私有）
+    push_project(path="/workspace", message="fix: bug", remote="https://github.com/...", branch="main", author_name="...", author_email="...")
+    - 非 Git 目录自动 git init；无 remote 且未传 remote 返回 NO_REMOTE（committed=true）
+
+    ═══════════════════════════════════════════════════════
+    ★★★ 限流查询 ★★★
+    ═══════════════════════════════════════════════════════
+    get_rate_limit() — 查询 API 剩余配额与重置时间（未认证也可调用，返回 60 额度）
+  en_US: |
+    GitHub connector plugin. Select operation via action parameter. All return {ok, data, error?, code?}.
+
+    Auth: set_token(token) / check_auth()
+    Search: search_repos(query, language, sort, per_page, page) / get_repo_info(repo)
+    Remote read: read_readme(repo, ref) / list_files(repo, path, ref, recursive) / read_file(repo, path, ref)
+    Clone: clone_repo(repo, dest, branch, depth, protocol) — auto pull if dest is same repo
+    Commit: create_repo(name, description, private, auto_init) / push_project(path, message, remote, branch, author_name, author_email)
+    Rate limit: get_rate_limit()
+
+parameters:
+  - name: "action"
+    type: string
+    required: true
+    description: "要执行的操作"
+    enum:
+      - "set_token"
+      - "check_auth"
+      - "search_repos"
+      - "get_repo_info"
+      - "read_readme"
+      - "list_files"
+      - "read_file"
+      - "clone_repo"
+      - "push_project"
+      - "create_repo"
+      - "get_rate_limit"
+
+  - name: "token"
+    type: string
+    required: false
+    description: "GitHub Personal Access Token（set_token 时必填，classic ghp_ 或 fine-grained github_pat_）"
+    example: "ghp_1234567890abcdef"
+
+  - name: "query"
+    type: string
+    required: false
+    description: "搜索关键词（search_repos 时必填）"
+    example: "python web framework"
+
+  - name: "language"
+    type: string
+    required: false
+    description: "按编程语言过滤（search_repos 使用）"
+    example: "python"
+
+  - name: "sort"
+    type: string
+    required: false
+    description: "搜索排序方式（search_repos 使用）"
+    enum:
+      - "stars"
+      - "forks"
+      - "updated"
+    default: "stars"
+
+  - name: "per_page"
+    type: integer
+    required: false
+    description: "每页数量 [1, 100]（search_repos 使用）"
+    default: 30
+
+  - name: "page"
+    type: integer
+    required: false
+    description: "页码，从 1 开始（search_repos 使用）"
+    default: 1
+
+  - name: "repo"
+    type: string
+    required: false
+    description: "仓库全名 owner/repo（get_repo_info/read_readme/list_files/read_file/clone_repo 使用）"
+    example: "microsoft/vscode"
+
+  - name: "path"
+    type: string
+    required: false
+    description: "仓库内文件/目录相对路径（list_files/read_file 使用）；或本地工作区路径（push_project 使用）"
+    example: "src/main.py"
+
+  - name: "ref"
+    type: string
+    required: false
+    description: "分支名/标签/commit SHA（read_readme/list_files/read_file 使用，缺省默认分支）"
+    example: "main"
+
+  - name: "recursive"
+    type: boolean
+    required: false
+    description: "是否递归列出所有层级文件（list_files 使用）"
+    default: false
+
+  - name: "dest"
+    type: string
+    required: false
+    description: "本地目标路径（clone_repo 时必填）"
+    example: "/home/user/projects/myrepo"
+
+  - name: "branch"
+    type: string
+    required: false
+    description: "分支名（clone_repo/push_project 使用，缺省默认分支或 main）"
+    example: "main"
+
+  - name: "depth"
+    type: integer
+    required: false
+    description: "浅克隆深度（clone_repo 使用，缺省不浅克隆）"
+    example: 1
+
+  - name: "protocol"
+    type: string
+    required: false
+    description: "克隆协议（clone_repo 使用）"
+    enum:
+      - "https"
+      - "ssh"
+    default: "https"
+
+  - name: "message"
+    type: string
+    required: false
+    description: "提交信息（push_project 时必填）"
+    example: "fix: resolve null pointer"
+
+  - name: "remote"
+    type: string
+    required: false
+    description: "远程仓库地址（push_project 使用，缺省用已配置的 origin）"
+    example: "https://github.com/user/repo.git"
+
+  - name: "author_name"
+    type: string
+    required: false
+    description: "提交者姓名（push_project 使用，缺省 AgentCluster）"
+    example: "AgentCluster"
+
+  - name: "author_email"
+    type: string
+    required: false
+    description: "提交者邮箱（push_project 使用，缺省 bot@agentcluster）"
+    example: "bot@agentcluster"
+
+  - name: "name"
+    type: string
+    required: false
+    description: "仓库名（create_repo 时必填）"
+    example: "my-new-repo"
+
+  - name: "description"
+    type: string
+    required: false
+    description: "仓库描述（create_repo 使用）"
+    example: "A new project"
+
+  - name: "private"
+    type: boolean
+    required: false
+    description: "是否私有仓库（create_repo 使用，缺省 true 安全优先）"
+    default: true
+
+  - name: "auto_init"
+    type: boolean
+    required: false
+    description: "是否自动初始化仓库（create_repo 使用，创建 README）"
+    default: false
+
+outputs:
+  - name: "ok"
+    type: boolean
+    description: "操作是否成功"
+
+  - name: "data"
+    type: object
+    description: "返回数据（搜索结果/元信息/文件内容/克隆结果等）"
+
+  - name: "error"
+    type: string
+    description: "错误信息（失败时返回，不含令牌原文）"
+
+  - name: "code"
+    type: string
+    description: "错误码（大写蛇形，如 AUTH_REQUIRED/REPO_NOT_FOUND/PARAM_INVALID 等）"

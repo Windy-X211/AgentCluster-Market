@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MCP 客户端配置</title>
+    <style>
+        :root {
+            color-scheme: dark;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            padding: 16px;
+            background: #0f1626;
+            color: #e6e9f2;
+            font-family: "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
+            font-size: 13px;
+            line-height: 1.5;
+        }
+
+        h2 {
+            margin: 0 0 4px;
+            font-size: 16px;
+        }
+
+        .sub {
+            opacity: .6;
+            font-size: 12px;
+            margin-bottom: 14px;
+        }
+
+        .card {
+            background: #161f33;
+            border: 1px solid #26314b;
+            border-radius: 10px;
+            padding: 12px 14px;
+            margin-bottom: 12px;
+        }
+
+        .row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .between {
+            justify-content: space-between;
+        }
+
+        .label {
+            font-size: 12px;
+            opacity: .65;
+            margin-bottom: 6px;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+
+        .field {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .field.full {
+            grid-column: 1 / -1;
+        }
+
+        .field label {
+            font-size: 11px;
+            opacity: .6;
+        }
+
+        input.text,
+        select,
+        textarea {
+            width: 100%;
+            padding: 6px 9px;
+            border-radius: 6px;
+            border: 1px solid #2c3a58;
+            background: #0b1220;
+            color: #dfe6f7;
+            font-family: inherit;
+            font-size: 12px;
+            outline: none;
+        }
+
+        textarea {
+            font-family: Consolas, monospace;
+            resize: vertical;
+            min-height: 54px;
+        }
+
+        input.text:focus,
+        select:focus,
+        textarea:focus {
+            border-color: #4b6bb5;
+        }
+
+        button {
+            padding: 5px 12px;
+            border-radius: 7px;
+            cursor: pointer;
+            border: 1px solid #3a4c74;
+            background: #1b2740;
+            color: #c9d6f5;
+            font-size: 12px;
+            transition: background .15s;
+            white-space: nowrap;
+        }
+
+        button:hover {
+            background: #24334f;
+        }
+
+        button.primary {
+            border-color: #4b6bb5;
+            background: #24345c;
+            color: #cfe0ff;
+        }
+
+        button.warn {
+            border-color: #7a4040;
+            background: #3a2226;
+            color: #ffb4b4;
+        }
+
+        button.small {
+            padding: 3px 9px;
+            font-size: 11px;
+        }
+
+        .status {
+            font-size: 11px;
+            padding: 2px 8px;
+            border-radius: 9px;
+        }
+
+        .status.ok {
+            color: #6fcf97;
+            background: rgba(111, 207, 151, .12);
+        }
+
+        .status.bad {
+            color: #ff9a9a;
+            background: rgba(255, 120, 120, .12);
+        }
+
+        .status.idle {
+            color: #b9c6e6;
+            background: rgba(185, 198, 230, .1);
+        }
+
+        .server {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            padding: 10px 12px;
+            border-radius: 8px;
+            background: #0e1728;
+            border: 1px solid #22304c;
+            margin-bottom: 8px;
+        }
+
+        .server:last-child {
+            margin-bottom: 0;
+        }
+
+        .s-head {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .s-name {
+            font-weight: 600;
+        }
+
+        .s-meta {
+            font-size: 11px;
+            opacity: .55;
+        }
+
+        .s-actions {
+            margin-left: auto;
+            display: flex;
+            gap: 6px;
+        }
+
+        .tools {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            max-height: 240px;
+            overflow: auto;
+        }
+
+        .tool {
+            display: flex;
+            gap: 8px;
+            padding: 4px 8px;
+            border-radius: 6px;
+            background: #0e1728;
+            font-size: 11px;
+        }
+
+        .tool b {
+            color: #9db4ff;
+            min-width: 220px;
+            font-weight: 600;
+        }
+
+        .tool span {
+            opacity: .65;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .hint {
+            font-size: 11px;
+            opacity: .5;
+            margin-top: 6px;
+        }
+
+        .msg {
+            font-size: 12px;
+            margin-top: 8px;
+            min-height: 16px;
+        }
+
+        .msg.ok {
+            color: #6fcf97;
+        }
+
+        .msg.err {
+            color: #ff9a9a;
+        }
+
+        .empty {
+            text-align: center;
+            opacity: .5;
+            padding: 18px 0;
+        }
+
+        pre {
+            margin: 0;
+            padding: 8px 10px;
+            background: #0b1220;
+            border: 1px solid #22304c;
+            border-radius: 6px;
+            white-space: pre-wrap;
+            word-break: break-all;
+            color: #b9c6e6;
+            font-size: 11px;
+        }
+    </style>
+</head>
+
+<body>
+    <h2>🔗 MCP 客户端</h2>
+    <div class="sub">连接外部 MCP 服务器，把对方工具注入智能体。工具名格式 <code>mcp__服务器__工具</code></div>
+
+    <div class="card">
+        <div class="row between">
+            <div><b>运行状态</b> <span id="status" class="status idle">检测中…</span></div>
+            <div class="row">
+                <button class="small" onclick="refreshAll()">保存并重连</button>
+                <button class="small" onclick="load()">刷新</button>
+            </div>
+        </div>
+        <div class="hint" id="statusDetail"></div>
+    </div>
+
+    <div class="card">
+        <div class="label">全局选项</div>
+        <div class="grid">
+            <div class="field">
+                <label>注入工具上限 max_tools</label>
+                <input class="text" id="optMaxTools" type="number" min="1" max="200" />
+            </div>
+            <div class="field">
+                <label>调用超时 call_timeout（秒）</label>
+                <input class="text" id="optCallTimeout" type="number" min="5" max="3600" />
+            </div>
+        </div>
+        <div class="row" style="margin-top: 8px">
+            <button class="small" onclick="saveOptions()">保存选项</button>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="row between" style="margin-bottom: 8px">
+            <b>MCP 服务器</b>
+            <div class="row">
+                <button class="small" onclick="showImport()">📋 粘贴 JSON 配置</button>
+                <button class="small primary" onclick="newServer()">+ 添加服务器</button>
+            </div>
+        </div>
+        <div id="servers"></div>
+
+        <div id="importCard" style="display: none; margin-top: 10px; padding-top: 10px; border-top: 1px solid #22304c">
+            <div class="row between" style="margin-bottom: 8px">
+                <b>粘贴 MCP 配置 JSON</b>
+                <button class="small" onclick="hideImport()">收起</button>
+            </div>
+            <textarea id="importText" style="min-height: 150px" placeholder='{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "D:\\work"]
+    },
+    "agentcluster": {
+      "type": "http",
+      "url": "http://127.0.0.1:8870/api/ext/mcp_server/mcp",
+      "headers": { "Authorization": "Bearer <token>" }
+    }
+  }
+}'></textarea>
+            <div class="row" style="margin-top: 8px">
+                <button class="primary" onclick="importConfig()">解析并导入</button>
+                <button onclick="hideImport()">取消</button>
+            </div>
+            <pre id="importResult" style="display: none; margin-top: 8px"></pre>
+            <div class="hint">
+                支持标准 <code>mcpServers</code> 结构（Claude Desktop / Cursor / Codex / DeepSeek Harness），也支持单个服务器对象或数组。
+                含 <code>command</code> 走 stdio；含 <code>url</code> 走 Streamable HTTP（URL 含 <code>/sse</code> 或
+                <code>type=sse</code> 时走 SSE）；
+                <code>headers</code> / <code>env</code> / <code>timeout</code> / <code>agents</code> 原样保留。
+            </div>
+        </div>
+    </div>
+
+    <div class="card" id="formCard" style="display: none">
+        <div class="row between" style="margin-bottom: 8px">
+            <b id="formTitle">添加服务器</b>
+            <button class="small" onclick="hideForm()">收起</button>
+        </div>
+        <input type="hidden" id="fId" />
+        <div class="grid">
+            <div class="field">
+                <label>显示名</label>
+                <input class="text" id="fName" placeholder="本地文件系统" />
+            </div>
+            <div class="field">
+                <label>传输方式</label>
+                <select id="fTransport" onchange="toggleTransport()">
+                    <option value="stdio">stdio（子进程）</option>
+                    <option value="http">Streamable HTTP</option>
+                    <option value="sse">SSE（旧版）</option>
+                </select>
+            </div>
+            <div class="field full stdio-only">
+                <label>启动命令 command</label>
+                <input class="text" id="fCommand" placeholder="npx / uvx / python" />
+            </div>
+            <div class="field full stdio-only">
+                <label>命令参数 args（空格分隔）</label>
+                <input class="text" id="fArgs" placeholder="-y @modelcontextprotocol/server-filesystem D:\work" />
+            </div>
+            <div class="field stdio-only">
+                <label>工作目录 cwd（可选）</label>
+                <input class="text" id="fCwd" placeholder="留空使用当前目录" />
+            </div>
+            <div class="field stdio-only">
+                <label>环境变量 env（JSON，可选）</label>
+                <textarea id="fEnv" placeholder='{"KEY":"VALUE"}'></textarea>
+            </div>
+            <div class="field full net-only">
+                <label>服务地址 url</label>
+                <input class="text" id="fUrl" placeholder="http://127.0.0.1:8870/api/ext/mcp_server/mcp" />
+            </div>
+            <div class="field full net-only">
+                <label>请求头 headers（JSON，可选）</label>
+                <textarea id="fHeaders" placeholder='{"Authorization":"Bearer xxx"}'></textarea>
+            </div>
+            <div class="field">
+                <label>调用超时（秒）</label>
+                <input class="text" id="fTimeout" type="number" min="5" value="120" />
+            </div>
+            <div class="field">
+                <label>可见智能体（all 或 id 逗号分隔）</label>
+                <input class="text" id="fAgents" placeholder="all" value="all" />
+            </div>
+            <div class="field full">
+                <label>启用</label>
+                <select id="fEnabled">
+                    <option value="1">启用</option>
+                    <option value="0">停用</option>
+                </select>
+            </div>
+        </div>
+        <div class="row" style="margin-top: 10px">
+            <button class="primary" onclick="saveServer()">保存并重连</button>
+            <button onclick="testForm()">测试连接</button>
+            <button onclick="hideForm()">取消</button>
+        </div>
+        <pre id="testResult" style="display: none; margin-top: 8px"></pre>
+    </div>
+
+    <div class="card">
+        <div class="label">当前注入的工具（<span id="toolCount">0</span>）</div>
+        <div class="tools" id="tools"></div>
+        <div class="hint">工具注入对所有智能体生效；服务器配置中的「可见智能体」可限定范围。</div>
+    </div>
+
+    <div class="msg" id="msg"></div>
+
+    <script>
+        let INFO = null;
+
+        function esc(s) {
+            return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            }[c]));
+        }
+
+        async function api(path, opts) {
+            const r = await fetch(path, Object.assign({ headers: { 'Content-Type': 'application/json' } }, opts || {}));
+            let data = null;
+            try { data = await r.json(); } catch (e) { data = null; }
+            if (!r.ok) throw new Error((data && (data.detail || data.error)) || ('HTTP ' + r.status));
+            return data;
+        }
+
+        async function load() {
+            try {
+                INFO = await api('/api/ext/mcp_client/info');
+                const st = INFO.status || {};
+                const connected = st.connected || 0;
+                const total = (INFO.servers || []).filter(s => s.enabled !== false).length;
+                const el = document.getElementById('status');
+                el.textContent = '● ' + connected + ' / ' + total + ' 已连接';
+                el.className = 'status ' + (connected > 0 ? 'ok' : (total ? 'bad' : 'idle'));
+                document.getElementById('statusDetail').textContent = INFO.mcp_available
+                    ? ('已注入工具 ' + (st.tool_count || 0) + ' 个。修改配置后保存会自动重连。')
+                    : ('MCP SDK 载入失败：' + (INFO.mcp_error || '未知错误'));
+                const opts = INFO.options || {};
+                document.getElementById('optMaxTools').value = opts.max_tools || 48;
+                document.getElementById('optCallTimeout').value = opts.call_timeout || 120;
+                renderServers(INFO.servers || [], st.servers || []);
+                renderTools(INFO.tools || []);
+            } catch (e) {
+                showMsg('加载失败：' + e.message, false);
+            }
+        }
+
+        function renderServers(servers, statuses) {
+            const box = document.getElementById('servers');
+            if (!servers.length) {
+                box.innerHTML = '<div class="empty">还没有配置 MCP 服务器，点击「添加服务器」开始。</div>';
+                return;
+            }
+            const smap = {};
+            statuses.forEach(s => { smap[String(s.id)] = s; });
+            box.innerHTML = servers.map(s => {
+                const st = smap[String(s.id)] || {};
+                const ok = !!st.connected;
+                const cls = ok ? 'ok' : (st.error ? 'bad' : 'idle');
+                const text = ok ? ('已连接 · ' + (st.tool_count || 0) + ' 工具') : (st.error ? ('未连接：' + esc(st.error)) : '等待连接');
+                const target = s.transport === 'stdio' ? esc(s.command || '') + ' ' + esc((s.args || []).join(' ')) : esc(s.url || '');
+                return `
+      <div class="server">
+        <div class="s-head">
+          <span class="s-name">${esc(s.name || s.id)}</span>
+          <span class="status ${cls}">${text}</span>
+          ${s.enabled === false ? '<span class="status idle">已停用</span>' : ''}
+          <div class="s-actions">
+            <button class="small" onclick="editServer('${esc(s.id)}')">编辑</button>
+            <button class="small" onclick="testServer('${esc(s.id)}')">测试</button>
+            <button class="small warn" onclick="deleteServer('${esc(s.id)}')">删除</button>
+          </div>
+        </div>
+        <div class="s-meta">${esc(s.transport)} · ${target || '（未配置地址）'} · 超时 ${esc(s.timeout || 120)}s · 智能体 ${esc(s.agents === 'all' ? 'all' : JSON.stringify(s.agents || []))}</div>
+      </div>`;
+            }).join('');
+        }
+
+        function renderTools(tools) {
+            document.getElementById('toolCount').textContent = tools.length;
+            const box = document.getElementById('tools');
+            if (!tools.length) {
+                box.innerHTML = '<div class="empty">暂无工具（服务器未连接或未启用）</div>';
+                return;
+            }
+            box.innerHTML = tools.map(t => `
+    <div class="tool">
+      <b>${esc(t.name)}</b>
+      <span title="${esc(t.description)}">${esc(t.description)}</span>
+    </div>`).join('');
+        }
+
+        function toggleTransport() {
+            const t = document.getElementById('fTransport').value;
+            document.querySelectorAll('.stdio-only').forEach(e => e.style.display = t === 'stdio' ? '' : 'none');
+            document.querySelectorAll('.net-only').forEach(e => e.style.display = t === 'stdio' ? 'none' : '');
+        }
+
+        function showImport() {
+            document.getElementById('importCard').style.display = '';
+            document.getElementById('importText').focus();
+        }
+
+        function hideImport() {
+            document.getElementById('importCard').style.display = 'none';
+            document.getElementById('importResult').style.display = 'none';
+        }
+
+        function parseMcpConfig(raw) {
+            const text = String(raw || '').trim();
+            if (!text) throw new Error('请粘贴 MCP 配置 JSON');
+            let obj;
+            try { obj = JSON.parse(text); } catch (e) { throw new Error('JSON 解析失败：' + e.message); }
+
+            let entries = [];
+            if (Array.isArray(obj)) {
+                entries = obj.map((cfg, i) => ({ key: (cfg && (cfg.name || cfg.id)) || ('server_' + (i + 1)), cfg: cfg || {} }));
+            } else if (obj && typeof obj === 'object' && obj.mcpServers && typeof obj.mcpServers === 'object') {
+                entries = Object.entries(obj.mcpServers).map(([key, cfg]) => ({ key, cfg: cfg || {} }));
+            } else if (obj && typeof obj === 'object' && (obj.command || obj.url || obj.transport)) {
+                entries = [{ key: obj.name || obj.id || 'server', cfg: obj }];
+            }
+            if (!entries.length) {
+                throw new Error('未识别到 mcpServers 配置，请粘贴包含 "mcpServers" 的 JSON');
+            }
+
+            const asObject = (v) => {
+                if (!v) return {};
+                if (typeof v === 'object' && !Array.isArray(v)) return v;
+                if (typeof v === 'string' && v.trim()) {
+                    try {
+                        const p = JSON.parse(v);
+                        return (p && typeof p === 'object' && !Array.isArray(p)) ? p : {};
+                    } catch (e) { return {}; }
+                }
+                return {};
+            };
+
+            return entries.map(({ key, cfg }) => {
+                let transport = String(cfg.transport || cfg.type || '').toLowerCase();
+                if (transport === 'streamable-http' || transport === 'streamable_http' || transport === 'streamablehttp') transport = 'http';
+                if (!transport) {
+                    transport = cfg.command ? 'stdio' : (String(cfg.url || '').toLowerCase().includes('/sse') ? 'sse' : 'http');
+                }
+                let args = [];
+                if (Array.isArray(cfg.args)) args = cfg.args.map(String);
+                else if (typeof cfg.args === 'string' && cfg.args.trim()) args = cfg.args.trim().split(/\s+/);
+                return {
+                    id: String(cfg.id || key),
+                    name: String(cfg.name || key),
+                    enabled: cfg.enabled !== false,
+                    transport: transport,
+                    command: String(cfg.command || ''),
+                    args: args,
+                    cwd: String(cfg.cwd || ''),
+                    env: asObject(cfg.env),
+                    url: String(cfg.url || ''),
+                    headers: asObject(cfg.headers),
+                    timeout: Number(cfg.timeout || cfg.call_timeout || 120) || 120,
+                    agents: cfg.agents || 'all',
+                };
+            });
+        }
+
+        async function importConfig() {
+            const resEl = document.getElementById('importResult');
+            let servers;
+            try {
+                servers = parseMcpConfig(document.getElementById('importText').value);
+            } catch (e) {
+                resEl.style.display = '';
+                resEl.textContent = e.message;
+                showMsg(e.message, false);
+                return;
+            }
+            let ok = 0;
+            const fails = [];
+            for (const s of servers) {
+                try {
+                    await api('/api/ext/mcp_client/servers', { method: 'POST', body: JSON.stringify(s) });
+                    ok += 1;
+                } catch (e) {
+                    fails.push((s.name || s.id) + '：' + e.message);
+                }
+            }
+            const summary = '导入完成：成功 ' + ok + ' 个' + (fails.length ? '，失败 ' + fails.length + ' 个' : '');
+            resEl.style.display = '';
+            resEl.textContent = summary + (fails.length ? '\n' + fails.join('\n') : '');
+            showMsg(summary, fails.length === 0);
+            if (ok) {
+                await load();
+            }
+        }
+
+        function newServer() {
+            document.getElementById('formTitle').textContent = '添加服务器';
+            document.getElementById('fId').value = '';
+            document.getElementById('fName').value = '';
+            document.getElementById('fTransport').value = 'stdio';
+            document.getElementById('fCommand').value = '';
+            document.getElementById('fArgs').value = '';
+            document.getElementById('fCwd').value = '';
+            document.getElementById('fEnv').value = '';
+            document.getElementById('fUrl').value = '';
+            document.getElementById('fHeaders').value = '';
+            document.getElementById('fTimeout').value = 120;
+            document.getElementById('fAgents').value = 'all';
+            document.getElementById('fEnabled').value = '1';
+            document.getElementById('testResult').style.display = 'none';
+            document.getElementById('formCard').style.display = '';
+            toggleTransport();
+        }
+
+        function editServer(sid) {
+            const s = (INFO.servers || []).find(x => String(x.id) === String(sid));
+            if (!s) return;
+            document.getElementById('formTitle').textContent = '编辑服务器：' + (s.name || s.id);
+            document.getElementById('fId').value = s.id || '';
+            document.getElementById('fName').value = s.name || '';
+            document.getElementById('fTransport').value = s.transport || 'stdio';
+            document.getElementById('fCommand').value = s.command || '';
+            document.getElementById('fArgs').value = (s.args || []).join(' ');
+            document.getElementById('fCwd').value = s.cwd || '';
+            document.getElementById('fEnv').value = Object.keys(s.env || {}).length ? JSON.stringify(s.env, null, 2) : '';
+            document.getElementById('fUrl').value = s.url || '';
+            document.getElementById('fHeaders').value = Object.keys(s.headers || {}).length ? JSON.stringify(s.headers, null, 2) : '';
+            document.getElementById('fTimeout').value = s.timeout || 120;
+            document.getElementById('fAgents').value = s.agents === 'all' ? 'all' : (Array.isArray(s.agents) ? s.agents.join(',') : 'all');
+            document.getElementById('fEnabled').value = s.enabled === false ? '0' : '1';
+            document.getElementById('testResult').style.display = 'none';
+            document.getElementById('formCard').style.display = '';
+            document.getElementById('formCard').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            toggleTransport();
+        }
+
+        function hideForm() {
+            document.getElementById('formCard').style.display = 'none';
+        }
+
+        function formPayload() {
+            return {
+                id: document.getElementById('fId').value || undefined,
+                name: document.getElementById('fName').value.trim(),
+                transport: document.getElementById('fTransport').value,
+                command: document.getElementById('fCommand').value,
+                args: document.getElementById('fArgs').value,
+                cwd: document.getElementById('fCwd').value,
+                env: document.getElementById('fEnv').value,
+                url: document.getElementById('fUrl').value,
+                headers: document.getElementById('fHeaders').value,
+                timeout: Number(document.getElementById('fTimeout').value || 120),
+                agents: document.getElementById('fAgents').value,
+                enabled: document.getElementById('fEnabled').value === '1',
+            };
+        }
+
+        async function saveServer() {
+            const p = formPayload();
+            if (!p.name) { showMsg('请填写显示名', false); return; }
+            try {
+                const r = await api('/api/ext/mcp_client/servers', { method: 'POST', body: JSON.stringify(p) });
+                showMsg('已保存' + (r.refreshed ? '并重连' : '（重连未完成，请点击刷新）'), true);
+                hideForm();
+                await load();
+            } catch (e) {
+                showMsg('保存失败：' + e.message, false);
+            }
+        }
+
+        async function deleteServer(sid) {
+            if (!confirm('确认删除该 MCP 服务器配置？')) return;
+            try {
+                await api('/api/ext/mcp_client/servers/' + encodeURIComponent(sid), { method: 'DELETE' });
+                showMsg('已删除', true);
+                await load();
+            } catch (e) {
+                showMsg('删除失败：' + e.message, false);
+            }
+        }
+
+        async function testServer(sid) {
+            showMsg('测试中…', true);
+            try {
+                const r = await api('/api/ext/mcp_client/servers/' + encodeURIComponent(sid) + '/test', { method: 'POST' });
+                const el = document.getElementById('testResult');
+                el.style.display = '';
+                el.textContent = JSON.stringify(r, null, 2);
+                showMsg(r.ok ? '连接成功，共 ' + r.tool_count + ' 个工具' : '连接失败', !!r.ok);
+            } catch (e) {
+                showMsg('测试失败：' + e.message, false);
+            }
+        }
+
+        async function testForm() {
+            const p = formPayload();
+            showMsg('测试中…', true);
+            try {
+                const r = await api('/api/ext/mcp_client/servers/test', { method: 'POST', body: JSON.stringify(p) });
+                const el = document.getElementById('testResult');
+                el.style.display = '';
+                el.textContent = JSON.stringify(r, null, 2);
+                showMsg(r.ok ? '连接成功，共 ' + r.tool_count + ' 个工具' : '连接失败', !!r.ok);
+            } catch (e) {
+                showMsg('测试失败：' + e.message, false);
+            }
+        }
+
+        async function saveOptions() {
+            try {
+                await api('/api/ext/mcp_client/options', {
+                    method: 'POST', body: JSON.stringify({
+                        max_tools: Number(document.getElementById('optMaxTools').value || 48),
+                        call_timeout: Number(document.getElementById('optCallTimeout').value || 120),
+                    })
+                });
+                showMsg('选项已保存', true);
+                await load();
+            } catch (e) {
+                showMsg('保存选项失败：' + e.message, false);
+            }
+        }
+
+        async function refreshAll() {
+            showMsg('正在重连…', true);
+            try {
+                const r = await api('/api/ext/mcp_client/refresh', { method: 'POST' });
+                showMsg(r.ok ? '已重连' : '重连未完成', !!r.ok);
+                await load();
+            } catch (e) {
+                showMsg('重连失败：' + e.message, false);
+            }
+        }
+
+        function showMsg(text, ok) {
+            const m = document.getElementById('msg');
+            m.textContent = text;
+            m.className = 'msg ' + (ok ? 'ok' : 'err');
+            clearTimeout(showMsg._t);
+            showMsg._t = setTimeout(() => { m.textContent = ''; }, 3500);
+        }
+
+        load();
+    </script>
+</body>
+
+</html>

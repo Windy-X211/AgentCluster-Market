@@ -1,0 +1,239 @@
+# send_email 插件 tool 定义 — 邮箱全功能管理
+identity:
+  name: "send_email"
+  author: "AgentCluster"
+version: "0.2.0"
+
+description:
+  zh_Hans: "邮箱全功能管理。通过 action 选择操作：发送send(支持html/attachments/cc/bcc)；读取list/read/search/folders；清理delete/clean；整理move/mark/organize；等待新邮件listen_wait（阻塞直到有新邮件或超时）。用provider预设可省略服务器配置，username/from_addr 与 password（授权码）可用能力参数预设固定。"
+  en_US: "Full mail manager. Pick action: send / list / read / search / folders / delete / clean / move / mark / organize / listen_wait."
+
+parameters:
+  - name: "action"
+    type: string
+    required: true
+    description: "要执行的操作"
+    enum:
+      - "send"
+      - "list"
+      - "read"
+      - "search"
+      - "folders"
+      - "delete"
+      - "clean"
+      - "move"
+      - "mark"
+      - "organize"
+
+      - "listen_wait"
+
+  - name: "provider"
+    type: string
+    required: false
+    description: "邮箱服务商预设，同时设定SMTP和IMAP服务器。qq/163/gmail/outlook/exmail"
+    enum: ["qq", "163", "gmail", "outlook", "exmail"]
+
+  - name: "username"
+    type: string
+    required: false
+    description: "邮箱账号（一般是完整邮箱地址），所有action通用"
+
+  - name: "password"
+    type: string
+    required: false
+    description: "授权码/邮箱独立密码（不是登录密码），所有action通用"
+
+  - name: "smtp_server"
+    type: string
+    required: false
+    description: "SMTP服务器地址（provider有值时可省略）"
+
+  - name: "smtp_port"
+    type: integer
+    required: false
+    default: 465
+    description: "SMTP端口（provider有值时可省略）"
+
+  - name: "use_ssl"
+    type: boolean
+    required: false
+    default: true
+    description: "SMTP是否SSL加密（false时用STARTTLS）"
+
+  - name: "from_addr"
+    type: string
+    required: false
+    description: "发件人显示地址，默认用username"
+
+  - name: "to_addrs"
+    type: string
+    required: false
+    description: "收件人列表，逗号或中文分号分隔（send必填）"
+
+  - name: "cc"
+    type: string
+    required: false
+    description: "抄送列表，逗号或中文分号分隔"
+
+  - name: "bcc"
+    type: string
+    required: false
+    description: "密送列表，逗号或中文分号分隔"
+
+  - name: "subject"
+    type: string
+    required: false
+    default: "(无主题)"
+    description: "邮件主题"
+
+  - name: "body"
+    type: string
+    required: false
+    default: ""
+    description: "邮件正文（纯文本）。与html二选一或同时提供"
+
+  - name: "html"
+    type: string
+    required: false
+    description: "邮件HTML富文本正文"
+
+  - name: "attachments"
+    type: string
+    required: false
+    description: "附件本地文件路径列表，逗号分隔"
+
+  - name: "imap_server"
+    type: string
+    required: false
+    description: "IMAP服务器地址（provider有值时可省略）"
+
+  - name: "imap_port"
+    type: integer
+    required: false
+    default: 993
+    description: "IMAP端口（默认993 SSL）"
+
+  - name: "folder"
+    type: string
+    required: false
+    default: "INBOX"
+    description: "邮箱文件夹，默认INBOX。中文文件夹名自动编码"
+
+  - name: "target_folder"
+    type: string
+    required: false
+    description: "目标文件夹（move/organize用）"
+
+  - name: "mail_id"
+    type: string
+    required: false
+    description: "单封邮件UID（read/delete/move/mark用）"
+
+  - name: "mail_ids"
+    type: string
+    required: false
+    description: "多封邮件UID，逗号分隔（delete/move/mark批量用）"
+
+  - name: "flag"
+    type: string
+    required: false
+    description: "标记类型（mark用）"
+    enum: ["seen", "unseen", "flagged", "unflagged", "deleted"]
+
+  - name: "limit"
+    type: integer
+    required: false
+    default: 20
+    description: "返回数量上限（list/search用，默认20）"
+
+  - name: "offset"
+    type: integer
+    required: false
+    default: 0
+    description: "偏移量（list/search分页用）"
+
+  - name: "download_dir"
+    type: string
+    required: false
+    description: "附件下载目录（read用，不传则只返回附件名和大小）"
+
+  - name: "mark_as_read"
+    type: boolean
+    required: false
+    default: true
+    description: "读取邮件后是否标记为已读"
+
+  - name: "from_filter"
+    type: string
+    required: false
+    description: "发件人包含关键字（search用）"
+
+  - name: "subject_filter"
+    type: string
+    required: false
+    description: "主题包含关键字（search用）"
+
+  - name: "since_date"
+    type: string
+    required: false
+    description: "起始日期YYYY-MM-DD（search用）"
+
+  - name: "before_date"
+    type: string
+    required: false
+    description: "截止日期YYYY-MM-DD（search用）"
+
+  - name: "unseen_only"
+    type: boolean
+    required: false
+    default: false
+    description: "仅搜索未读邮件（search/list用）"
+
+  - name: "delete_mode"
+    type: string
+    required: false
+    default: "soft"
+    description: "删除模式：soft移到已删除文件夹/hard永久删除"
+    enum: ["soft", "hard"]
+
+  - name: "clean_folders"
+    type: string
+    required: false
+    description: "要清空的文件夹列表，逗号分隔（clean用，默认已删除,垃圾邮件）"
+
+  - name: "organize_rule"
+    type: string
+    required: false
+    description: "整理规则（organize用）"
+    enum: ["by_sender", "by_keyword"]
+
+  - name: "keyword_map"
+    type: string
+    required: false
+    description: "关键字到文件夹的映射JSON（organize by_keyword用）"
+
+  - name: "check_interval"
+    type: integer
+    required: false
+    default: 30
+    description: "监听轮询间隔秒数（listen_wait用，默认30）"
+
+  - name: "timeout"
+    type: integer
+    required: false
+    default: 120
+    description: "同步等待超时秒数（listen_wait用，默认120，无上限）。收到邮件立即返回，超时返回空。返回含remaining_time剩余监听秒数"
+
+outputs:
+  - name: "ok"
+    type: boolean
+    description: "是否成功"
+  - name: "data"
+    type: object
+    description: "返回数据"
+  - name: "error"
+    type: string
+    description: "失败原因"
+  - name: "code"
+    type: string
+    description: "错误码"

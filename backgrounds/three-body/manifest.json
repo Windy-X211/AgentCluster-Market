@@ -1,0 +1,10 @@
+{
+    "id": "three-body",
+    "name": "三体混沌",
+    "type": "animation",
+    "entry": "background.html",
+    "description": "三颗质量相近、颜色各异的星体在万有引力下演绎三体问题——轨道不可解析、对初始条件极度敏感的混沌之舞",
+    "preview": "radial-gradient(circle at 50% 50%, #0a0518 0%, #05030a 55%, #020308 100%)",
+    "opacity": 1.0,
+    "interactive": false
+}

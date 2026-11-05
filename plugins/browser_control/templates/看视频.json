@@ -1,0 +1,103 @@
+{
+    "version":  1,
+    "name":  "看视频",
+    "description":  "",
+    "start_url":  "about:blank",
+    "mode":  "system",
+    "created_at":  "2026-11-04T13:20:31",
+    "completed_at":  "2026-11-04T13:21:31",
+    "steps":  [
+                  {
+                      "index":  0,
+                      "action":  "navigate",
+                      "url":  "https://cn.bing.com/search?q=B%E7%AB%99\u0026cvid=e284d62acfe64d18944a0facfa47df56\u0026gs_lcrp=EgRlZGdlKgYIABBFGDkyBggAEEUYOdIBCDU0NTBqMGoyqAIAsAIB\u0026FORM=ANAB01\u0026PC=NMTS",
+                      "url_before":  "",
+                      "url_after":  "https://cn.bing.com/search?q=B%E7%AB%99\u0026cvid=e284d62acfe64d18944a0facfa47df56\u0026gs_lcrp=EgRlZGdlKgYIABBFGDkyBggAEEUYOdIBCDU0NTBqMGoyqAIAsAIB\u0026FORM=ANAB01\u0026PC=NMTS",
+                      "selector":  "",
+                      "stable_selector":  "",
+                      "text":  "",
+                      "coordinate":  null,
+                      "annotation":  "",
+                      "timestamp":  "2026-11-04T13:20:51"
+                  },
+                  {
+                      "index":  1,
+                      "action":  "navigate",
+                      "url":  "https://cn.bing.com/search?q=B%E7%AB%99\u0026cvid=e284d62acfe64d18944a0facfa47df56\u0026gs_lcrp=EgRlZGdlKgYIABBFGDkyBggAEEUYOdIBCDU0NTBqMGoyqAIAsAIB\u0026FORM=ANAB01\u0026PC=NMTS\u0026rdr=1\u0026rdrig=5F832AA1C9CF44CEB982E4B03C0A2EF5",
+                      "url_before":  "",
+                      "url_after":  "https://cn.bing.com/search?q=B%E7%AB%99\u0026cvid=e284d62acfe64d18944a0facfa47df56\u0026gs_lcrp=EgRlZGdlKgYIABBFGDkyBggAEEUYOdIBCDU0NTBqMGoyqAIAsAIB\u0026FORM=ANAB01\u0026PC=NMTS\u0026rdr=1\u0026rdrig=5F832AA1C9CF44CEB982E4B03C0A2EF5",
+                      "selector":  "",
+                      "stable_selector":  "",
+                      "text":  "",
+                      "coordinate":  null,
+                      "annotation":  "",
+                      "timestamp":  "2026-11-04T13:20:53"
+                  },
+                  {
+                      "index":  2,
+                      "action":  "click",
+                      "url_before":  "",
+                      "url_after":  "https://cn.bing.com/search?q=B%E7%AB%99\u0026cvid=e284d62acfe64d18944a0facfa47df56\u0026gs_lcrp=EgRlZGdlKgYIABBFGDkyBggAEEUYOdIBCDU0NTBqMGoyqAIAsAIB\u0026FORM=ANAB01\u0026PC=NMTS\u0026rdr=1\u0026rdrig=5F832AA1C9CF44CEB982E4B03C0A2EF5",
+                      "url":  "https://cn.bing.com/search?q=B%E7%AB%99\u0026cvid=e284d62acfe64d18944a0facfa47df56\u0026gs_lcrp=EgRlZGdlKgYIABBFGDkyBggAEEUYOdIBCDU0NTBqMGoyqAIAsAIB\u0026FORM=ANAB01\u0026PC=NMTS\u0026rdr=1\u0026rdrig=5F832AA1C9CF44CEB982E4B03C0A2EF5",
+                      "selector":  "div:nth-of-type(1) \u003e main:nth-of-type(1) \u003e ol:nth-of-type(1) \u003e li:nth-of-type(2) \u003e h2:nth-of-type(1) \u003e a:nth-of-type(1) \u003e strong:nth-of-type(1)",
+                      "stable_selector":  "div:nth-of-type(1) \u003e main:nth-of-type(1) \u003e ol:nth-of-type(1) \u003e li:nth-of-type(2) \u003e h2:nth-of-type(1) \u003e a:nth-of-type(1) \u003e strong:nth-of-type(1)",
+                      "text":  "bilibili",
+                      "coordinate":  null,
+                      "annotation":  "",
+                      "timestamp":  "2026-11-04T13:20:56"
+                  },
+                  {
+                      "index":  3,
+                      "action":  "navigate",
+                      "url":  "https://www.bilibili.com/",
+                      "url_before":  "",
+                      "url_after":  "https://www.bilibili.com/",
+                      "selector":  "",
+                      "stable_selector":  "",
+                      "text":  "",
+                      "coordinate":  null,
+                      "annotation":  "",
+                      "timestamp":  "2026-11-04T13:20:56"
+                  },
+                  {
+                      "index":  4,
+                      "action":  "click",
+                      "url_before":  "",
+                      "url_after":  "https://cn.bing.com/search?q=B%E7%AB%99\u0026cvid=e284d62acfe64d18944a0facfa47df56\u0026gs_lcrp=EgRlZGdlKgYIABBFGDkyBggAEEUYOdIBCDU0NTBqMGoyqAIAsAIB\u0026FORM=ANAB01\u0026PC=NMTS\u0026rdr=1\u0026rdrig=5F832AA1C9CF44CEB982E4B03C0A2EF5",
+                      "url":  "https://cn.bing.com/search?q=B%E7%AB%99\u0026cvid=e284d62acfe64d18944a0facfa47df56\u0026gs_lcrp=EgRlZGdlKgYIABBFGDkyBggAEEUYOdIBCDU0NTBqMGoyqAIAsAIB\u0026FORM=ANAB01\u0026PC=NMTS\u0026rdr=1\u0026rdrig=5F832AA1C9CF44CEB982E4B03C0A2EF5",
+                      "selector":  "div:nth-of-type(1) \u003e div:nth-of-type(1) \u003e div:nth-of-type(1) \u003e a:nth-of-type(1) \u003e div:nth-of-type(1) \u003e div:nth-of-type(1) \u003e picture:nth-of-type(1) \u003e img:nth-of-type(1)",
+                      "stable_selector":  "div:nth-of-type(1) \u003e div:nth-of-type(1) \u003e div:nth-of-type(1) \u003e a:nth-of-type(1) \u003e div:nth-of-type(1) \u003e div:nth-of-type(1) \u003e picture:nth-of-type(1) \u003e img:nth-of-type(1)",
+                      "text":  "",
+                      "coordinate":  null,
+                      "annotation":  "",
+                      "timestamp":  "2026-11-04T13:21:04"
+                  },
+                  {
+                      "index":  5,
+                      "action":  "navigate",
+                      "url":  "https://www.bilibili.com/video/BV176pu6jE7F/?trackid=web_pegasus_0.router-web-pegasus-2479516-gfll4.1793769656038.196\u0026spm_id_from=333.1007.tianma.3-1-5.click",
+                      "url_before":  "",
+                      "url_after":  "https://www.bilibili.com/video/BV176pu6jE7F/?trackid=web_pegasus_0.router-web-pegasus-2479516-gfll4.1793769656038.196\u0026spm_id_from=333.1007.tianma.3-1-5.click",
+                      "selector":  "",
+                      "stable_selector":  "",
+                      "text":  "",
+                      "coordinate":  null,
+                      "annotation":  "",
+                      "timestamp":  "2026-11-04T13:21:05"
+                  },
+                  {
+                      "index":  6,
+                      "action":  "click",
+                      "url_before":  "",
+                      "url_after":  "https://cn.bing.com/search?q=B%E7%AB%99\u0026cvid=e284d62acfe64d18944a0facfa47df56\u0026gs_lcrp=EgRlZGdlKgYIABBFGDkyBggAEEUYOdIBCDU0NTBqMGoyqAIAsAIB\u0026FORM=ANAB01\u0026PC=NMTS\u0026rdr=1\u0026rdrig=5F832AA1C9CF44CEB982E4B03C0A2EF5",
+                      "url":  "https://cn.bing.com/search?q=B%E7%AB%99\u0026cvid=e284d62acfe64d18944a0facfa47df56\u0026gs_lcrp=EgRlZGdlKgYIABBFGDkyBggAEEUYOdIBCDU0NTBqMGoyqAIAsAIB\u0026FORM=ANAB01\u0026PC=NMTS\u0026rdr=1\u0026rdrig=5F832AA1C9CF44CEB982E4B03C0A2EF5",
+                      "selector":  "div:nth-of-type(2) \u003e div:nth-of-type(1) \u003e div:nth-of-type(1) \u003e div:nth-of-type(1) \u003e div:nth-of-type(1) \u003e div:nth-of-type(1) \u003e div:nth-of-type(1) \u003e video:nth-of-type(1)",
+                      "stable_selector":  "div:nth-of-type(2) \u003e div:nth-of-type(1) \u003e div:nth-of-type(1) \u003e div:nth-of-type(1) \u003e div:nth-of-type(1) \u003e div:nth-of-type(1) \u003e div:nth-of-type(1) \u003e video:nth-of-type(1)",
+                      "text":  "",
+                      "coordinate":  null,
+                      "annotation":  "",
+                      "timestamp":  "2026-11-04T13:21:10"
+                  }
+              ],
+    "final_url":  "https://cn.bing.com/search?q=B%E7%AB%99\u0026cvid=e284d62acfe64d18944a0facfa47df56\u0026gs_lcrp=EgRlZGdlKgYIABBFGDkyBggAEEUYOdIBCDU0NTBqMGoyqAIAsAIB\u0026FORM=ANAB01\u0026PC=NMTS\u0026rdr=1\u0026rdrig=5F832AA1C9CF44CEB982E4B03C0A2EF5"
+}

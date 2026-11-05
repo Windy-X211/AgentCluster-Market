@@ -1,0 +1,10 @@
+{
+    "id": "fireworks",
+    "name": "烟花绽放",
+    "type": "animation",
+    "entry": "background.html",
+    "description": "绚烂烟花在夜空接连绽放：球状、垂柳、菊花、棕榈、十字、双层环、闪烁多层爆裂，色彩斑斓震撼。点击或触摸任意位置即可在该处发射烟花",
+    "preview": "radial-gradient(circle at 50% 72%, #3a1028 0%, #120620 45%, #050208 100%)",
+    "opacity": 1.0,
+    "interactive": true
+}

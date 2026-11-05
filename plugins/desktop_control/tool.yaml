@@ -1,0 +1,359 @@
+# desktop_control 插件的 tool 定义 —— 桌面控制
+
+identity:
+  name: "desktop_control"
+  author: "AgentCluster"
+version: "0.1.0"
+
+description:
+  zh_Hans: |
+    桌面控制插件，支持屏幕截图、鼠标交互、键盘输入、屏幕录制、音频采集。
+
+    ═══════════════════════════════════════════════════════
+    ★★★ 截图功能 ★★★
+    ═══════════════════════════════════════════════════════
+    screenshot(action="screenshot", purpose="inspect", region={...})
+    - purpose=inspect：返回 base64 数据，不保存到本地，用于视觉分析
+    - purpose=save：保存到 save_path 指定路径
+    - region：可选，归一化坐标 {x1, y1, x2, y2}，缺省全屏
+
+    ═══════════════════════════════════════════════════════
+    ★★★ 鼠标操作 ★★★
+    ═══════════════════════════════════════════════════════
+    click(x=0.5, y=0.5) — 左键单击
+    double_click(x=0.5, y=0.5) — 左键双击
+    right_click(x=0.5, y=0.5) — 右键单击
+    scroll(amount=1, x=0.5, y=0.5) — 滚动（正数向下，负数向上，|amount|<=20）
+    drag(x1=0.3, y1=0.5, x2=0.7, y2=0.5, duration=0.5) — 拖动
+
+    ═══════════════════════════════════════════════════════
+    ★★★ 键盘操作 ★★★
+    ═══════════════════════════════════════════════════════
+    key_press(key="enter") — 单键输入
+    hotkey(keys=["ctrl", "c"]) — 组合键（2-5 个键，必须含修饰键）
+    type_text(text="Hello 世界") — 文字输入（自动选择 ASCII 键入或剪贴板粘贴）
+
+    ═══════════════════════════════════════════════════════
+    ★★★ 屏幕录制 ★★★
+    ═══════════════════════════════════════════════════════
+    record(save_path="output.mp4", region={...}, duration=0, audio_source="none")
+    - 支持区域/全屏录制
+    - duration=0 表示不设上限，需手动停止
+    - audio_source: none/system/microphone/both
+
+    record_control(mode="pause") — 暂停
+    record_control(mode="resume") — 恢复
+    record_control(mode="stop") — 停止并保存
+    record_control(mode="discard") — 丢弃（删除临时数据）
+
+    录制期间浮层显示红点 + REC + 状态 + 时长，浮层不进入视频画面。
+
+    ═══════════════════════════════════════════════════════
+    ★★★ 等待操作 ★★★
+    ═══════════════════════════════════════════════════════
+    wait(duration=1.0) — 阻塞指定时长（0.1-60.0 秒）
+
+    所有操作返回 {ok, data, error?} 结构。
+  en_US: |
+    Desktop control plugin with screenshot, mouse, keyboard, screen recording, and audio capture.
+
+    ═══════════════════════════════════════════════════════
+    ★★★ Screenshot ★★★
+    ═══════════════════════════════════════════════════════
+    screenshot(action="screenshot", purpose="inspect", region={...})
+    - purpose=inspect: returns base64 data, not saved locally
+    - purpose=save: saves to save_path
+    - region: optional, normalized coordinates {x1, y1, x2, y2}, defaults to fullscreen
+
+    ═══════════════════════════════════════════════════════
+    ★★★ Mouse Operations ★★★
+    ═══════════════════════════════════════════════════════
+    click(x=0.5, y=0.5) — Left click
+    double_click(x=0.5, y=0.5) — Double click
+    right_click(x=0.5, y=0.5) — Right click
+    scroll(amount=1, x=0.5, y=0.5) — Scroll (positive down, negative up, |amount|<=20)
+    drag(x1=0.3, y1=0.5, x2=0.7, y2=0.5, duration=0.5) — Drag
+
+    ═══════════════════════════════════════════════════════
+    ★★★ Keyboard Operations ★★★
+    ═══════════════════════════════════════════════════════
+    key_press(key="enter") — Single key press
+    hotkey(keys=["ctrl", "c"]) — Hotkey (2-5 keys, must contain modifier)
+    type_text(text="Hello 世界") — Text input (auto-selects ASCII typing or clipboard paste)
+
+    ═══════════════════════════════════════════════════════
+    ★★★ Screen Recording ★★★
+    ═══════════════════════════════════════════════════════
+    record(save_path="output.mp4", region={...}, duration=0, audio_source="none")
+    - Supports region/fullscreen recording
+    - duration=0 means unlimited, stop manually
+    - audio_source: none/system/microphone/both
+
+    record_control(mode="pause") — Pause
+    record_control(mode="resume") — Resume
+    record_control(mode="stop") — Stop and save
+    record_control(mode="discard") — Discard (delete temp data)
+
+    Recording overlay shows red dot + REC + status + elapsed time. Overlay not included in video.
+
+    ═══════════════════════════════════════════════════════
+    ★★★ Wait ★★★
+    ═══════════════════════════════════════════════════════
+    wait(duration=1.0) — Block for specified duration (0.1-60.0 seconds)
+
+    All operations return {ok, data, error?} structure.
+
+parameters:
+  - name: "action"
+    type: string
+    required: true
+    description: "要执行的操作"
+    enum:
+      - "screenshot"
+      - "click"
+      - "double_click"
+      - "right_click"
+      - "scroll"
+      - "drag"
+      - "wait"
+      - "key_press"
+      - "hotkey"
+      - "type_text"
+      - "record"
+      - "record_control"
+
+  - name: "purpose"
+    type: string
+    required: false
+    description: "截图用途：inspect（返回 base64，不保存）/ save（保存到 save_path）"
+    enum:
+      - "inspect"
+      - "save"
+    default: "inspect"
+
+  - name: "region"
+    type: object
+    required: false
+    description: "区域坐标 {x1, y1, x2, y2}，归一化坐标 [0.0, 1.0]，缺省全屏"
+    example: {"x1": 0.1, "y1": 0.1, "x2": 0.9, "y2": 0.9}
+
+  - name: "save_path"
+    type: string
+    required: false
+    description: "保存路径（screenshot save 模式、record 录制时必填）"
+    example: "/home/user/screenshots/test.png"
+
+  - name: "x"
+    type: number
+    required: false
+    description: "归一化 X 坐标 [0.0, 1.0]"
+    default: 0.5
+
+  - name: "y"
+    type: number
+    required: false
+    description: "归一化 Y 坐标 [0.0, 1.0]"
+    default: 0.5
+
+  - name: "x1"
+    type: number
+    required: false
+    description: "起始归一化 X 坐标 [0.0, 1.0]"
+    default: 0.3
+
+  - name: "y1"
+    type: number
+    required: false
+    description: "起始归一化 Y 坐标 [0.0, 1.0]"
+    default: 0.5
+
+  - name: "x2"
+    type: number
+    required: false
+    description: "结束归一化 X 坐标 [0.0, 1.0]"
+    default: 0.7
+
+  - name: "y2"
+    type: number
+    required: false
+    description: "结束归一化 Y 坐标 [0.0, 1.0]"
+    default: 0.5
+
+  - name: "amount"
+    type: integer
+    required: false
+    description: "滚动量，正数向下，负数向上，|amount| <= 20"
+    default: 1
+
+  - name: "duration"
+    type: number
+    required: false
+    description: "操作时长（drag: [0.1, 5.0]；wait: [0.1, 60.0]；record: 不设上限）"
+    default: 0.5
+
+  - name: "key"
+    type: string
+    required: false
+    description: "按键名（key_press 使用）"
+    enum:
+      - "a"
+      - "b"
+      - "c"
+      - "d"
+      - "e"
+      - "f"
+      - "g"
+      - "h"
+      - "i"
+      - "j"
+      - "k"
+      - "l"
+      - "m"
+      - "n"
+      - "o"
+      - "p"
+      - "q"
+      - "r"
+      - "s"
+      - "t"
+      - "u"
+      - "v"
+      - "w"
+      - "x"
+      - "y"
+      - "z"
+      - "0"
+      - "1"
+      - "2"
+      - "3"
+      - "4"
+      - "5"
+      - "6"
+      - "7"
+      - "8"
+      - "9"
+      - "enter"
+      - "esc"
+      - "tab"
+      - "backspace"
+      - "delete"
+      - "insert"
+      - "space"
+      - "home"
+      - "end"
+      - "pageup"
+      - "pagedown"
+      - "up"
+      - "down"
+      - "left"
+      - "right"
+      - "f1"
+      - "f2"
+      - "f3"
+      - "f4"
+      - "f5"
+      - "f6"
+      - "f7"
+      - "f8"
+      - "f9"
+      - "f10"
+      - "f11"
+      - "f12"
+      - "ctrl"
+      - "alt"
+      - "shift"
+      - "win"
+
+  - name: "keys"
+    type: array
+    required: false
+    description: "按键名列表（hotkey 使用，长度 2-5，必须含修饰键）"
+    items:
+      type: string
+    example: ["ctrl", "c"]
+
+  - name: "text"
+    type: string
+    required: false
+    description: "待输入文本（type_text 使用，长度 <= 1000）"
+    example: "Hello 世界"
+
+  - name: "interval"
+    type: number
+    required: false
+    description: "字符间隔 [0.0, 1.0]（type_text ASCII 模式使用）"
+    default: 0.0
+
+  - name: "mode"
+    type: string
+    required: false
+    description: "录制控制模式（record_control 使用）"
+    enum:
+      - "pause"
+      - "resume"
+      - "stop"
+      - "discard"
+
+  - name: "audio_source"
+    type: string
+    required: false
+    description: "音频来源（record 使用）"
+    enum:
+      - "none"
+      - "system"
+      - "microphone"
+      - "both"
+    default: "none"
+
+outputs:
+  - name: "ok"
+    type: boolean
+    description: "操作是否成功"
+
+  - name: "data"
+    type: string
+    description: "返回数据（截图 base64 或状态信息）"
+
+  - name: "error"
+    type: string
+    description: "错误信息（失败时返回）"
+
+  - name: "action"
+    type: string
+    description: "执行的 action"
+
+  - name: "purpose"
+    type: string
+    description: "截图用途"
+
+  - name: "saved_path"
+    type: string
+    description: "保存路径（screenshot save 模式、record stop 时返回）"
+
+  - name: "truncated"
+    type: boolean
+    description: "截图是否因过大而缩放"
+
+  - name: "input_method"
+    type: string
+    description: "输入方式：typed（逐字符键入）/ pasted（剪贴板粘贴）"
+
+  - name: "clipboard_restored"
+    type: boolean
+    description: "剪贴板是否成功恢复"
+
+  - name: "recording_id"
+    type: string
+    description: "录制会话 ID"
+
+  - name: "record_status"
+    type: string
+    description: "录制状态：recording / paused / stopped / discarded"
+
+  - name: "elapsed"
+    type: number
+    description: "已录制时长（秒）"
+
+  - name: "audio_source"
+    type: string
+    description: "音频来源"

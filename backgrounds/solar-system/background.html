@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="zh">
+
+<head>
+    <meta charset="UTF-8">
+    <title>太阳系</title>
+    <style>
+        html,
+        body {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            overflow: hidden;
+            background: transparent;
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+    </style>
+</head>
+
+<body>
+    <canvas id="c"></canvas>
+    <script>
+        (function () {
+            const cv = document.getElementById('c');
+            const ctx = cv.getContext('2d');
+            let W = 0, H = 0, dpr = Math.min(window.devicePixelRatio || 1, 2);
+            let cx = 0, cy = 0, scale = 1, sizeUnit = 3;
+            let starsFar = [], starsNear = [];
+            const reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+            const TILT = 62 * Math.PI / 180;
+            const YS = Math.cos(TILT);
+
+            function mix(a, b, t) { return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]; }
+            function rgb(c) { return 'rgb(' + (c[0] | 0) + ',' + (c[1] | 0) + ',' + (c[2] | 0) + ')'; }
+            function rgba(c, a) { return 'rgba(' + (c[0] | 0) + ',' + (c[1] | 0) + ',' + (c[2] | 0) + ',' + a + ')'; }
+            const BLACK = [0, 0, 0], WHITE = [255, 255, 255];
+
+            const planets = [
+                { orbit: 0.09, radius: 1.8, color: [180, 175, 168], speed: 1.60, angle: Math.random() * 6.283 },
+                { orbit: 0.13, radius: 2.6, color: [232, 200, 122], speed: 1.20, angle: Math.random() * 6.283, atmos: 0.45 },
+                { orbit: 0.18, radius: 2.8, color: [96, 168, 232], speed: 1.00, angle: Math.random() * 6.283, moon: true, atmos: 0.55 },
+                { orbit: 0.23, radius: 2.2, color: [224, 118, 82], speed: 0.80, angle: Math.random() * 6.283 },
+                { orbit: 0.30, radius: 5.6, color: [216, 168, 120], speed: 0.45, angle: Math.random() * 6.283, bands: true },
+                { orbit: 0.37, radius: 4.8, color: [232, 212, 160], speed: 0.33, angle: Math.random() * 6.283, ring: true },
+                { orbit: 0.42, radius: 3.5, color: [159, 216, 232], speed: 0.24, angle: Math.random() * 6.283, atmos: 0.40 },
+                { orbit: 0.47, radius: 3.4, color: [88, 124, 216], speed: 0.18, angle: Math.random() * 6.283, atmos: 0.50 }
+            ];
+            const baseSpeed = reduced ? 0.0006 : 0.0020;
+            let sunPulse = 0;
+
+            const nebulae = [
+                { x: 0.18, y: 0.28, r: 0.45, color: [90, 45, 130], a: 0.14 },
+                { x: 0.82, y: 0.72, r: 0.50, color: [35, 70, 135], a: 0.12 },
+                { x: 0.72, y: 0.18, r: 0.38, color: [130, 55, 85], a: 0.09 }
+            ];
+
+            function resize() {
+                W = window.innerWidth; H = window.innerHeight;
+                cv.width = W * dpr; cv.height = H * dpr;
+                cv.style.width = W + 'px'; cv.style.height = H + 'px';
+                ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+                cx = W / 2; cy = H / 2;
+                const maxOrbit = 0.47;
+                scale = Math.min(W * 0.46 / maxOrbit, H * 0.46 / (maxOrbit * YS));
+                sizeUnit = scale * 0.0030;
+            }
+
+            function init() {
+                const nFar = Math.min(220, Math.floor(W * H / 8000));
+                starsFar = [];
+                for (let i = 0; i < nFar; i++) starsFar.push({
+                    x: Math.random() * W, y: Math.random() * H,
+                    r: Math.random() * 0.9 + 0.2,
+                    a: Math.random() * 6.283, s: Math.random() * 0.018 + 0.003
+                });
+                const nNear = Math.min(28, Math.floor(W * H / 60000));
+                starsNear = [];
+                for (let i = 0; i < nNear; i++) starsNear.push({
+                    x: Math.random() * W, y: Math.random() * H,
+                    r: Math.random() * 1.4 + 1.0,
+                    a: Math.random() * 6.283, s: Math.random() * 0.03 + 0.008,
+                    hue: Math.random() < 0.3 ? [180, 200, 255] : (Math.random() < 0.5 ? [255, 235, 200] : [255, 255, 255])
+                });
+            }
+
+            function drawSphere(px, py, radius, color, lx, ly, atmos) {
+                if (atmos) {
+                    const ar = radius * (1 + atmos * 0.8);
+                    const ag = ctx.createRadialGradient(px, py, radius * 0.92, px, py, ar);
+                    ag.addColorStop(0, rgba(color, atmos * 0.4));
+                    ag.addColorStop(1, rgba(color, 0));
+                    ctx.fillStyle = ag;
+                    ctx.beginPath(); ctx.arc(px, py, ar, 0, 6.283); ctx.fill();
+                }
+                const off = radius * 0.42;
+                const hx = px + lx * off, hy = py + ly * off;
+                const grad = ctx.createRadialGradient(hx, hy, 0, px, py, radius);
+                grad.addColorStop(0, rgb(mix(color, WHITE, 0.5)));
+                grad.addColorStop(0.45, rgb(color));
+                grad.addColorStop(1, rgb(mix(color, BLACK, 0.65)));
+                ctx.fillStyle = grad;
+                ctx.beginPath(); ctx.arc(px, py, radius, 0, 6.283); ctx.fill();
+                ctx.globalAlpha = 0.55;
+                ctx.fillStyle = rgb(mix(color, WHITE, 0.8));
+                ctx.beginPath(); ctx.arc(hx, hy, radius * 0.16, 0, 6.283); ctx.fill();
+                ctx.globalAlpha = 1;
+            }
+
+            function drawJupiterBands(px, py, radius, color) {
+                ctx.save();
+                ctx.beginPath(); ctx.arc(px, py, radius, 0, 6.283); ctx.clip();
+                const bands = [-0.55, -0.28, 0, 0.28, 0.55];
+                for (let i = 0; i < bands.length; i++) {
+                    const yOff = bands[i] * radius;
+                    const dark = i % 2 === 0;
+                    ctx.strokeStyle = rgba(mix(color, dark ? BLACK : WHITE, 0.22), 0.55);
+                    ctx.lineWidth = radius * 0.16;
+                    ctx.beginPath();
+                    ctx.ellipse(px, py + yOff, radius * 1.05, radius * YS * 0.35, 0, 0, 6.283);
+                    ctx.stroke();
+                }
+                ctx.restore();
+            }
+
+            function drawSaturnRing(px, py, radius, front) {
+                ctx.save();
+                ctx.translate(px, py);
+                ctx.rotate(-0.18);
+                const rx = radius * 2.35, ry = rx * YS;
+                ctx.strokeStyle = front ? 'rgba(232,212,160,0.55)' : 'rgba(232,212,160,0.38)';
+                ctx.lineWidth = 1.4;
+                ctx.beginPath();
+                ctx.ellipse(0, 0, rx, ry, 0, front ? 0 : Math.PI, front ? Math.PI : 6.283);
+                ctx.stroke();
+                const rx2 = radius * 1.7, ry2 = rx2 * YS;
+                ctx.strokeStyle = front ? 'rgba(248,230,180,0.45)' : 'rgba(248,230,180,0.30)';
+                ctx.lineWidth = 2.2;
+                ctx.beginPath();
+                ctx.ellipse(0, 0, rx2, ry2, 0, front ? 0 : Math.PI, front ? Math.PI : 6.283);
+                ctx.stroke();
+                ctx.restore();
+            }
+
+            function drawOne(p, px, py) {
+                let dx = cx - px, dy = cy - py;
+                const dl = Math.hypot(dx, dy) || 1; dx /= dl; dy /= dl;
+                const pr = p.radius * sizeUnit;
+                if (p.ring) drawSaturnRing(px, py, pr, false);
+                drawSphere(px, py, pr, p.color, dx, dy, p.atmos);
+                if (p.bands) drawJupiterBands(px, py, pr, p.color);
+                if (p.ring) drawSaturnRing(px, py, pr, true);
+                if (p.moon) {
+                    const ma = p.angle * 5 + 1.7;
+                    const md = pr * 2.8;
+                    const mx = px + Math.cos(ma) * md;
+                    const my = py + Math.sin(ma) * md * YS;
+                    let mdx = cx - mx, mdy = cy - my;
+                    const ml = Math.hypot(mdx, mdy) || 1; mdx /= ml; mdy /= ml;
+                    drawSphere(mx, my, 0.9 * sizeUnit, [200, 200, 200], mdx, mdy, 0);
+                }
+            }
+
+            function frame() {
+                ctx.clearRect(0, 0, W, H);
+
+                for (const n of nebulae) {
+                    const nx = n.x * W, ny = n.y * H, nr = n.r * scale;
+                    const g = ctx.createRadialGradient(nx, ny, 0, nx, ny, nr);
+                    g.addColorStop(0, rgba(n.color, n.a));
+                    g.addColorStop(1, rgba(n.color, 0));
+                    ctx.fillStyle = g;
+                    ctx.beginPath(); ctx.arc(nx, ny, nr, 0, 6.283); ctx.fill();
+                }
+
+                for (const st of starsFar) {
+                    st.a += st.s;
+                    const tw = 0.35 + 0.65 * Math.sin(st.a);
+                    ctx.globalAlpha = tw * 0.6;
+                    ctx.fillStyle = '#ffffff';
+                    ctx.beginPath(); ctx.arc(st.x, st.y, st.r, 0, 6.283); ctx.fill();
+                }
+                for (const st of starsNear) {
+                    st.a += st.s;
+                    const tw = 0.4 + 0.6 * Math.sin(st.a);
+                    ctx.globalAlpha = tw;
+                    ctx.fillStyle = rgb(st.hue);
+                    ctx.beginPath(); ctx.arc(st.x, st.y, st.r, 0, 6.283); ctx.fill();
+                    if (tw > 0.85) {
+                        ctx.globalAlpha = (tw - 0.85) * 0.5;
+                        ctx.beginPath(); ctx.arc(st.x, st.y, st.r * 3, 0, 6.283); ctx.fill();
+                    }
+                }
+                ctx.globalAlpha = 1;
+
+                ctx.strokeStyle = 'rgba(150,175,220,0.10)';
+                ctx.lineWidth = 1;
+                for (const p of planets) {
+                    const r = p.orbit * scale;
+                    ctx.beginPath(); ctx.ellipse(cx, cy, r, r * YS, 0, 0, 6.283); ctx.stroke();
+                }
+
+                const ordered = planets.map(function (p) {
+                    p.angle += p.speed * baseSpeed;
+                    const r = p.orbit * scale;
+                    const px = cx + Math.cos(p.angle) * r;
+                    const py = cy + Math.sin(p.angle) * r * YS;
+                    return { p: p, px: px, py: py };
+                });
+                ordered.sort(function (a, b) { return a.py - b.py; });
+
+                const sunR = Math.max(9, scale * 0.024);
+
+                for (const o of ordered) {
+                    if (o.py >= cy) break;
+                    drawOne(o.p, o.px, o.py);
+                }
+
+                sunPulse += 0.008;
+                const pulse = 1 + 0.05 * Math.sin(sunPulse);
+                let g = ctx.createRadialGradient(cx, cy, sunR, cx, cy, sunR * 7 * pulse);
+                g.addColorStop(0, 'rgba(255,180,80,0.22)');
+                g.addColorStop(0.4, 'rgba(255,140,50,0.10)');
+                g.addColorStop(1, 'rgba(255,110,30,0)');
+                ctx.fillStyle = g;
+                ctx.beginPath(); ctx.arc(cx, cy, sunR * 7 * pulse, 0, 6.283); ctx.fill();
+                g = ctx.createRadialGradient(cx, cy, sunR * 0.6, cx, cy, sunR * 2.6 * pulse);
+                g.addColorStop(0, 'rgba(255,225,160,0.55)');
+                g.addColorStop(1, 'rgba(255,150,60,0)');
+                ctx.fillStyle = g;
+                ctx.beginPath(); ctx.arc(cx, cy, sunR * 2.6 * pulse, 0, 6.283); ctx.fill();
+                g = ctx.createRadialGradient(cx, cy, 0, cx, cy, sunR);
+                g.addColorStop(0, '#ffffff');
+                g.addColorStop(0.35, '#fff2cc');
+                g.addColorStop(0.75, '#ffcf6a');
+                g.addColorStop(1, '#ff8a2c');
+                ctx.fillStyle = g;
+                ctx.beginPath(); ctx.arc(cx, cy, sunR, 0, 6.283); ctx.fill();
+
+                for (const o of ordered) {
+                    if (o.py < cy) continue;
+                    drawOne(o.p, o.px, o.py);
+                }
+
+                ctx.globalAlpha = 1;
+                requestAnimationFrame(frame);
+            }
+
+            let rt = null;
+            window.addEventListener('resize', function () {
+                clearTimeout(rt); rt = setTimeout(function () { resize(); init(); }, 150);
+            });
+            resize(); init(); requestAnimationFrame(frame);
+        })();
+    </script>
+</body>
+
+</html>

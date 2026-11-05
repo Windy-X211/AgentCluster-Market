@@ -1,0 +1,10 @@
+{
+    "id": "solar-system",
+    "name": "太阳系",
+    "type": "animation",
+    "entry": "background.html",
+    "description": "倾斜俯瞰太阳系，行星具立体光影与大气晕，深邃宏大",
+    "preview": "radial-gradient(ellipse at 50% 55%, #2a1a3a 0%, #0a0a1e 50%, #050510 100%)",
+    "opacity": 1.0,
+    "interactive": false
+}

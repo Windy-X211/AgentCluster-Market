@@ -1,0 +1,244 @@
+# sd_webui 插件的 tool 定义 —— 本地 Stable Diffusion WebUI 生图
+
+identity:
+  name: "sd_webui"
+  author: "AgentCluster"
+version: "0.1.0"
+
+description:
+  zh_Hans: |
+    连接本地 Stable Diffusion WebUI 的 /sdapi/v1 API 生成图片或管理模型。
+
+    ═══════════════════════════════════════════════════════
+    ★★★ 文生图 txt2img（核心）★★★
+    ═══════════════════════════════════════════════════════
+    run(action="txt2img", prompt="...", negative_prompt="...", steps=28, cfg_scale=7,
+        width=512, height=512, seed=-1, sampler_name="DPM++ 2M Karras", ...)
+    - 先把用户想法扩写成完整英文提示词再填 prompt（含画质/风格/构图/光线标签）
+    - negative_prompt 填不想出现的元素（如 lowres, bad anatomy, watermark 等）
+    - 生成后图片保存到 save_dir，返回 file（主图路径）、files（全部路径）、seed 等
+
+    ═══════════════════════════════════════════════════════
+    ★★★ 图生图 img2img ★★★
+    ═══════════════════════════════════════════════════════
+    run(action="img2img", init_images="<base64或本地图片路径>", prompt="...",
+        denoising_strength=0.75, ...)
+    - init_images 传参考图（base64 字符串或本地文件绝对路径），denoising_strength 控制重绘幅度
+
+    ═══════════════════════════════════════════════════════
+    ★★★ 查询列表 list ★★★
+    ═══════════════════════════════════════════════════════
+    run(action="list", what="models")      # 大模型
+    run(action="list", what="samplers")    # 采样器
+    run(action="list", what="schedulers")  # 调度器
+    run(action="list", what="loras")       # LoRA
+    run(action="list", what="embeddings")  # Embedding
+    run(action="list", what="upscalers")   # 放大器
+
+    ═══════════════════════════════════════════════════════
+    ★★★ 任务控制 ★★★
+    ═══════════════════════════════════════════════════════
+    run(action="progress")   # 查询当前生成进度
+    run(action="interrupt")  # 中断当前生成
+
+    ═══════════════════════════════════════════════════════
+    ★★★ 全局选项 ★★★
+    ═══════════════════════════════════════════════════════
+    run(action="get_options", option_key="sd_model_checkpoint")  # 读取某项
+    run(action="set_options", option_key="sd_model_checkpoint", option_value="模型名")  # 切换大模型
+
+    返回 {ok, action, ...}；失败返回 {ok: false, error}。
+  en_US: |
+    Connect to a local Stable Diffusion WebUI (/sdapi/v1) to generate images or manage models.
+    run(action="txt2img", prompt=..., negative_prompt=..., steps=28, cfg_scale=7, width=512, height=512, seed=-1, ...)
+    Other actions: img2img, list, progress, interrupt, get_options, set_options.
+
+parameters:
+  - name: "action"
+    type: string
+    required: true
+    description: "要执行的操作"
+    enum:
+      - "txt2img"
+      - "img2img"
+      - "list"
+      - "progress"
+      - "interrupt"
+      - "get_options"
+      - "set_options"
+
+  - name: "what"
+    type: string
+    required: false
+    description: "list 时查询的内容类型"
+    enum:
+      - "models"
+      - "samplers"
+      - "schedulers"
+      - "loras"
+      - "embeddings"
+      - "upscalers"
+    default: "models"
+
+  - name: "prompt"
+    type: string
+    required: false
+    description: "正向提示词（英文，可含画质/风格标签）。调用前应先把用户需求扩写成完整提示词"
+
+  - name: "negative_prompt"
+    type: string
+    required: false
+    description: "反向提示词（英文），过滤不想要的元素，如 lowres, bad anatomy, watermark"
+    default: "lowres, bad anatomy, bad hands, watermark, signature, worst quality, blurry"
+
+  - name: "steps"
+    type: integer
+    required: false
+    description: "采样步数，越高越精细也越慢，常用 20-40"
+    default: 28
+
+  - name: "sampler_name"
+    type: string
+    required: false
+    description: "采样器名称，如 DPM++ 2M Karras / Euler a。留空用 SD 默认。可用 list samplers 查询"
+
+  - name: "scheduler"
+    type: string
+    required: false
+    description: "调度器名称（新版 SD 支持）。留空用自动。可用 list schedulers 查询"
+
+  - name: "cfg_scale"
+    type: number
+    required: false
+    description: "CFG 引导强度，越大越贴合提示词，常用 5-9"
+    default: 7.0
+
+  - name: "width"
+    type: integer
+    required: false
+    description: "图片宽度（像素），常用 512/768/1024，需为 64 的倍数"
+    default: 512
+
+  - name: "height"
+    type: integer
+    required: false
+    description: "图片高度（像素），常用 512/768/1024，需为 64 的倍数"
+    default: 512
+
+  - name: "seed"
+    type: integer
+    required: false
+    description: "随机种子，-1 为随机。固定 seed 可复现相同结果"
+    default: -1
+
+  - name: "batch_size"
+    type: integer
+    required: false
+    description: "每批生成张数"
+    default: 1
+
+  - name: "n_iter"
+    type: integer
+    required: false
+    description: "迭代批次数（总张数 = batch_size * n_iter）"
+    default: 1
+
+  - name: "restore_faces"
+    type: boolean
+    required: false
+    description: "是否启用面部修复"
+    default: false
+
+  - name: "tiling"
+    type: boolean
+    required: false
+    description: "是否生成可平铺纹理"
+    default: false
+
+  - name: "enable_hr"
+    type: boolean
+    required: false
+    description: "是否启用高清修复（hires.fix），放大并重绘提升细节"
+    default: false
+
+  - name: "hr_scale"
+    type: number
+    required: false
+    description: "高清修复放大倍数（enable_hr=true 时生效）"
+    default: 2.0
+
+  - name: "hr_upscaler"
+    type: string
+    required: false
+    description: "高清修复用的放大器名称，如 Latent / R-ESRGAN 4x+。可用 list upscalers 查询"
+
+  - name: "denoising_strength"
+    type: number
+    required: false
+    description: "重绘幅度（img2img 或高清修复时用），0-1，越大改动越多"
+    default: 0.75
+
+  - name: "init_images"
+    type: string
+    required: false
+    description: "图生图参考图：base64 字符串，或本地图片文件绝对路径。img2img 时必填"
+
+  - name: "override_settings"
+    type: object
+    required: false
+    description: "本次生成临时覆盖的全局选项，如 {\"sd_model_checkpoint\": \"模型名\", \"CLIP_stop_at_last_layers\": 2}"
+
+  - name: "base_url"
+    type: string
+    required: false
+    description: "SD WebUI 的 API 地址，默认 http://127.0.0.1:7860"
+    default: "http://127.0.0.1:7860"
+
+  - name: "save_dir"
+    type: string
+    required: false
+    description: "生成图片的保存目录，默认 outputs/sd_webui（项目根下）"
+    default: "outputs/sd_webui"
+
+  - name: "option_key"
+    type: string
+    required: false
+    description: "全局选项键名（get_options/set_options 用），如 sd_model_checkpoint"
+
+  - name: "option_value"
+    type: string
+    required: false
+    description: "全局选项值（set_options 用）"
+
+outputs:
+  - name: "ok"
+    type: boolean
+    description: "是否成功"
+
+  - name: "action"
+    type: string
+    description: "执行的 action"
+
+  - name: "file"
+    type: string
+    description: "生成的主图片本地路径（txt2img/img2img 成功时返回）"
+
+  - name: "files"
+    type: array
+    description: "生成的全部图片本地路径"
+
+  - name: "seed"
+    type: integer
+    description: "实际使用的随机种子"
+
+  - name: "info"
+    type: string
+    description: "SD 返回的元信息摘要（含种子、参数等）"
+
+  - name: "data"
+    type: string
+    description: "查询类操作（list/get_options/progress）返回的 JSON 文本"
+
+  - name: "error"
+    type: string
+    description: "失败时的错误信息"

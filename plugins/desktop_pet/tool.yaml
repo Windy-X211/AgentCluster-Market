@@ -1,0 +1,94 @@
+identity:
+  name: "desktop_pet"
+description: |
+    控制 Live2D 桌宠。四大功能共 15 个操作：
+    1. 窗口控制：show/hide/toggle/close — 显示隐藏关闭
+    2. 布局控制：switch/move/resize/update — 模型切换、位置（归一化坐标 0~1）、缩放（0.3~3.0）
+    3. 捏脸参数：get_params/set_params/express — 先 get_params 查当前模型支持哪些参数，再 set_params 设置（支持 smooth_ms 平滑过渡）
+    4. 流式动画：start_stream/append_frames/stop_stream — 低延迟捏脸动画。用紧凑 JSON 结构：
+       {"interval":"500ms","params":["A","B"],"values":[[v1,v2],[v3,v4]]}
+       start_stream 启动并送首批帧 → append_frames 增量追加 → 最后一帧加 eof=true 让它自停
+parameters:
+  - name: "action"
+    type: string
+    required: true
+    description: "操作类型"
+    enum:
+      - "show"
+      - "hide"
+      - "toggle"
+      - "close"
+      - "switch"
+      - "move"
+      - "resize"
+      - "update"
+      - "get_params"
+      - "set_params"
+      - "express"
+      - "start_stream"
+      - "append_frames"
+      - "stop_stream"
+
+  - name: "model_path"
+    type: string
+    required: false
+    description: "Live2D 模型目录或 model3.json 完整路径（show/switch 时使用）。不指定时默认使用插件自带的符玄模型（desktop_pet/assets/符玄）"
+
+  - name: "x"
+    type: number
+    required: false
+    description: "水平位置，归一化坐标 0.0~1.0（0=最左，1=最右）"
+  - name: "y"
+    type: number
+    required: false
+    description: "垂直位置，归一化坐标 0.0~1.0（0=最上，1=最下）"
+  - name: "dx"
+    type: number
+    required: false
+    description: "水平增量（update 专用）"
+  - name: "dy"
+    type: number
+    required: false
+    description: "垂直增量（update 专用）"
+  - name: "scale"
+    type: number
+    required: false
+    description: "缩放 0.3~3.0，默认 1.0"
+  - name: "dscale"
+    type: number
+    required: false
+    description: "缩放增量（update 专用）"
+
+  - name: "params"
+    type: string
+    required: false
+    description: |
+      捏脸参数 JSON 对象字符串，如 '{"ParamAngleX": 15, "ParamEyeBallX": 0.5}'。
+      常见参数名：ParamAngleX/Y/Z(头部旋转 -30~30), ParamEyeBallX/Y(眼球方向 -1~1),
+      ParamMouthOpenY(嘴巴开合 0~1), ParamBrowLY/RY(眉毛)。
+      先调用 get_params 查看当前模型支持的完整列表。
+  - name: "expression_index"
+    type: integer
+    required: false
+    description: "预设表情索引（express 专用），从 0 开始"
+  - name: "smooth_ms"
+    type: integer
+    required: false
+    description: "平滑过渡时长毫秒，默认 200；0=立即生效"
+
+  - name: "stream_data"
+    type: string
+    required: false
+    description: |
+      流式参数 JSON 字符串。start_stream 时需完整结构：
+      '{"interval":"500ms","params":["ParamAngleY","ParamEyeBallX"],"values":[[-10,0],[15,0.3],[0,0]],"repeat":-1}'
+      repeat 字段：-1=无限循环直到 stop_stream；0 或正整数=播放 N 遍后自动停止；默认 0（一遍后停）。
+      interval 格式：整数+ms，如 "500ms"。append_frames 时可省略 params/interval/repeat（沿用上一个 start_stream 的设置）。
+  - name: "values_only"
+    type: string
+    required: false
+    description: "append_frames 专用，纯 values 数组 JSON，如 '[[1,2],[3,4]]'。比 stream_data 更轻量。"
+  - name: "eof"
+    type: boolean
+    required: false
+    description: "append_frames 专用，标记这是最后一批帧，播放完后自动停止流式动画"

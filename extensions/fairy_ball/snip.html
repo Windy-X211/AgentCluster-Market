@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="utf-8">
+    <title>区域截图</title>
+    <style>
+        html,
+        body {
+            margin: 0;
+            padding: 0;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+            background: transparent;
+            user-select: none;
+            cursor: crosshair;
+            font-family: 'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif;
+        }
+
+        /* 全屏截图铺底 */
+        #bg {
+            position: absolute;
+            inset: 0;
+            background-size: 100% 100%;
+            background-repeat: no-repeat;
+        }
+
+        /* 遮罩：四块 + 选区挖空 */
+        .mask {
+            position: absolute;
+            background: rgba(8, 12, 24, .45);
+        }
+
+        #mTop {
+            top: 0;
+            left: 0;
+            right: 0;
+        }
+
+        #mBottom {
+            bottom: 0;
+            left: 0;
+            right: 0;
+        }
+
+        #mLeft {
+            top: 0;
+            bottom: 0;
+            left: 0;
+        }
+
+        #mRight {
+            top: 0;
+            bottom: 0;
+            right: 0;
+        }
+
+        /* 选区框 */
+        #selBox {
+            position: absolute;
+            display: none;
+            border: 1.5px solid #5b8cff;
+            box-shadow: 0 0 0 9999px rgba(8, 12, 24, .45), 0 0 18px rgba(91, 140, 255, .55);
+            pointer-events: none;
+            z-index: 2;
+        }
+
+        /* 选区四角 */
+        #selBox::before,
+        #selBox::after,
+        #selBox .corner::before,
+        #selBox .corner::after {
+            content: '';
+            position: absolute;
+            width: 11px;
+            height: 11px;
+            border: 2px solid #8fb7ff;
+        }
+
+        #selBox::before {
+            top: -2px;
+            left: -2px;
+            border-right: none;
+            border-bottom: none;
+        }
+
+        #selBox::after {
+            top: -2px;
+            right: -2px;
+            border-left: none;
+            border-bottom: none;
+        }
+
+        #selBox .corner::before {
+            bottom: -2px;
+            left: -2px;
+            border-right: none;
+            border-top: none;
+        }
+
+        #selBox .corner::after {
+            bottom: -2px;
+            right: -2px;
+            border-left: none;
+            border-top: none;
+        }
+
+        /* 尺寸提示 */
+        #sizeTip {
+            position: absolute;
+            display: none;
+            padding: 3px 9px;
+            border-radius: 6px;
+            background: rgba(15, 22, 38, .92);
+            border: 1px solid rgba(91, 140, 255, .45);
+            color: #cfe0ff;
+            font-size: 12px;
+            pointer-events: none;
+            z-index: 3;
+        }
+
+        /* 提示横幅 */
+        #banner {
+            position: absolute;
+            top: 26px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 9px 22px;
+            border-radius: 999px;
+            background: rgba(15, 22, 38, .88);
+            border: 1px solid rgba(120, 150, 220, .3);
+            color: #d7e2f7;
+            font-size: 13px;
+            letter-spacing: 1px;
+            pointer-events: none;
+            z-index: 4;
+            animation: fadeIn .25s ease-out;
+        }
+
+        /* 去向工具条（选区完成后） */
+        #toolbar {
+            position: absolute;
+            display: none;
+            padding: 6px;
+            border-radius: 12px;
+            background: rgba(15, 22, 38, .95);
+            border: 1px solid rgba(120, 150, 220, .3);
+            box-shadow: 0 12px 34px rgba(0, 0, 0, .55);
+            z-index: 5;
+        }
+
+        #toolbar .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 7px 13px;
+            margin: 0 2px;
+            border: none;
+            border-radius: 8px;
+            background: rgba(91, 140, 255, .16);
+            color: #d7e2f7;
+            font-size: 13px;
+            cursor: pointer;
+        }
+
+        #toolbar .btn:hover {
+            background: rgba(91, 140, 255, .32);
+            color: #fff;
+        }
+
+        #toolbar .btn.primary {
+            background: linear-gradient(135deg, #5b8cff, #a78bfa);
+            color: #fff;
+        }
+
+        #toolbar .btn.plain {
+            background: transparent;
+            color: #8b9bc0;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateX(-50%) translateY(-6px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateX(-50%);
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div id="bg"></div>
+    <div id="selBox">
+        <div class="corner"></div>
+    </div>
+    <div id="sizeTip"></div>
+    <div id="banner">按住鼠标拖选要提问的屏幕区域 · ESC 取消</div>
+    <div id="toolbar">
+        <button class="btn primary" id="btnMain">🖼 主窗提问</button>
+        <button class="btn" id="btnQuick">💬 小窗提问</button>
+        <button class="btn plain" id="btnRedo">↺ 重选</button>
+        <button class="btn plain" id="btnCancel">✕ 取消</button>
+    </div>
+    <script>
+        (function () {
+            const ea = window.electronAPI || {}
+            const snipAPI = ea.snip || {}
+            const bg = document.getElementById('bg')
+            const selBox = document.getElementById('selBox')
+            const sizeTip = document.getElementById('sizeTip')
+            const banner = document.getElementById('banner')
+            const toolbar = document.getElementById('toolbar')
+
+            let ready = false
+            let start = null       // 按下点
+            let rect = null        // {x,y,w,h} CSS 逻辑坐标
+            let chosen = false     // 已选择去向（防重复提交）
+
+            // —— 收主进程全屏截图 ——
+            if (snipAPI.onImage) {
+                snipAPI.onImage(function (dataUrl, info) {
+                    bg.style.backgroundImage = 'url(' + dataUrl + ')'
+                    ready = true
+                })
+            }
+
+            function setRect(x, y, w, h) {
+                rect = { x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h) }
+                selBox.style.display = 'block'
+                selBox.style.left = rect.x + 'px'
+                selBox.style.top = rect.y + 'px'
+                selBox.style.width = rect.w + 'px'
+                selBox.style.height = rect.h + 'px'
+                sizeTip.style.display = 'block'
+                sizeTip.textContent = rect.w + ' × ' + rect.h
+                // 尺寸提示跟随选区右上角
+                sizeTip.style.left = Math.min(rect.x + rect.w + 8, window.innerWidth - 70) + 'px'
+                sizeTip.style.top = Math.max(rect.y - 26, 6) + 'px'
+            }
+
+            function clearSel() {
+                rect = null
+                selBox.style.display = 'none'
+                sizeTip.style.display = 'none'
+                toolbar.style.display = 'none'
+            }
+
+            // —— 框选 ——
+            document.addEventListener('mousedown', (e) => {
+                if (e.button !== 0 || !ready || chosen) return
+                if (toolbar.style.display === 'block') return  // 工具条开着 → 只允许重选/取消按钮
+                banner.style.display = 'none'
+                clearSel()
+                start = { x: e.clientX, y: e.clientY }
+                setRect(start.x, start.y, 0, 0)
+                e.preventDefault()
+            })
+            document.addEventListener('mousemove', (e) => {
+                if (!start) return
+                const x = Math.min(start.x, e.clientX), y = Math.min(start.y, e.clientY)
+                const w = Math.abs(e.clientX - start.x), h = Math.abs(e.clientY - start.y)
+                setRect(x, y, w, h)
+            })
+            document.addEventListener('mouseup', () => {
+                if (!start) return
+                start = null
+                if (rect && rect.w > 8 && rect.h > 8) showToolbar()
+                else clearSel()
+            })
+
+            // —— 去向工具条 ——
+            function showToolbar() {
+                const vw = window.innerWidth, vh = window.innerHeight
+                toolbar.style.display = 'block'
+                const tw = toolbar.offsetWidth, th = toolbar.offsetHeight
+                // 优先选区右下角；越界则选区左上/贴边
+                let tx = rect.x + rect.w + 10, ty = rect.y + rect.h + 10
+                if (tx + tw > vw - 6) { tx = rect.x - tw - 10; }
+                if (tx < 6) tx = Math.min(rect.x, vw - tw - 6)
+                if (ty + th > vh - 6) { ty = rect.y - th - 10; }
+                if (ty < 6) ty = 6
+                toolbar.style.left = Math.max(tx, 6) + 'px'
+                toolbar.style.top = Math.max(ty, 6) + 'px'
+            }
+
+            function choose(target) {
+                if (chosen || !rect) return
+                chosen = true
+                snipAPI.choose && snipAPI.choose({ target: target, rect: rect })
+            }
+            document.getElementById('btnMain').addEventListener('click', () => choose('main'))
+            document.getElementById('btnQuick').addEventListener('click', () => choose('quick'))
+            document.getElementById('btnRedo').addEventListener('click', () => { chosen = false; clearSel(); banner.style.display = 'none' })
+            document.getElementById('btnCancel').addEventListener('click', () => cancel())
+
+            function cancel() {
+                if (chosen) return
+                chosen = true
+                snipAPI.choose && snipAPI.choose({ target: 'cancel' })
+            }
+            document.addEventListener('keydown', (e) => { if (e.key === 'Escape') cancel() })
+            document.addEventListener('contextmenu', (e) => { e.preventDefault(); cancel() })
+        })()
+    </script>
+</body>
+
+</html>

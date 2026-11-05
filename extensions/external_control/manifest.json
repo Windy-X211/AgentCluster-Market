@@ -1,0 +1,22 @@
+{
+    "id": "external_control",
+    "name": "外部AI控制",
+    "version": "1.0.0",
+    "type": "backend-service",
+    "author": "AgentCluster",
+    "description": "对外开放控制接口，让 DeepSeek Harness、Codex、Claude Code 等外部 AI 程序通过 HTTP/WebSocket 连接本程序，发出结构化命令创建智能体团队、发起对话、实时获取输出。统一命令入口 /api/ext/external_control/command，WebSocket 事件流 /api/ext/external_control/ws/events/{cid}。Token 鉴权，本机可查看。",
+    "icon": "🔌",
+    "tags": [
+        "external",
+        "control",
+        "api",
+        "integration",
+        "automation"
+    ],
+    "frontend_files": [],
+    "backend_entry": "backend",
+    "system_prompt_file": "system_prompt.md",
+    "skills": [
+        "agentcluster-control"
+    ]
+}
