@@ -1,7 +1,105 @@
 {
   "version": "1.0",
-  "updated_at": "2026-11-06T20:25:49",
+  "updated_at": "2026-11-06T20:28:17",
   "items": [
+    {
+      "kind": "skill",
+      "id": "lx-music-control",
+      "dir": "skills/lx-music-control",
+      "updated_at": "2026-11-06T20:28:17",
+      "version": "2.0.0",
+      "author": "Windy-X211",
+      "name": "洛雪音乐操控",
+      "description": "控制洛雪音乐桌面版（lx-music-desktop）播放/暂停/切歌/跳转/调音量/静音/收藏/查询状态/查歌词/搜索播放/播放歌单。当用户说\"打开洛雪音乐\"\"播放音乐\"\"暂停\"\"下一曲\"\"上一曲\"\"切歌\"\"切下一首\"\"调音量\"\"静音\"\"跳进\"\"跳转进度\"\"现在在放什么歌\"\"当前播放\"\"播放歌词\"\"收藏这首歌\"\"搜歌\"\"播放这首歌\"\"播放歌单\"或提到\"洛雪\"\"lx-music\"\"LX Music\"时加载此技能。",
+      "icon": "🧠",
+      "tags": [
+        "music",
+        "player",
+        "http",
+        "api",
+        "automation",
+        "lxmusic"
+      ],
+      "label": "洛雪音乐操控",
+      "skill_name": "lx-music-control"
+    },
+    {
+      "kind": "skill",
+      "id": "novel_writing",
+      "dir": "skills/novel_writing",
+      "updated_at": "2026-11-06T20:28:17",
+      "version": "1.0.0",
+      "author": "Windy-X211",
+      "name": "小说创作",
+      "description": "网络小说创作全流程，包含世界观构建、人物设定、情节大纲、章节撰写与编辑校对。当用户说\"写小说\"\"写故事\"\"创作\"\"人物设定\"\"世界观\"\"剧情\"时加载此技能。",
+      "icon": "🧠",
+      "tags": [
+        "creative",
+        "writing",
+        "long-form"
+      ],
+      "label": "小说创作",
+      "skill_name": "novel-writing"
+    },
+    {
+      "kind": "skill",
+      "id": "pptx",
+      "dir": "skills/pptx",
+      "updated_at": "2026-11-06T20:28:17",
+      "version": "1.0.0",
+      "author": "Windy-X211",
+      "name": "PPT 演示文稿",
+      "description": "创建、编辑、分析 PowerPoint (.pptx) 演示文稿。当用户说'做PPT''做演示文稿''生成幻灯片''PPT排版''修改PPT''读取PPT''分析PPT'或提到'pptx''presentation''slides''幻灯片'时加载此技能。涵盖从零创建（pptxgenjs）、基于模板编辑（OOXML 解包/编辑/打包）、内容与布局 QA 全流程。",
+      "icon": "🧠",
+      "tags": [
+        "office",
+        "pptx",
+        "presentation",
+        "slides",
+        "document"
+      ],
+      "label": "PPT 演示文稿",
+      "skill_name": "pptx"
+    },
+    {
+      "kind": "skill",
+      "id": "role_playing",
+      "dir": "skills/role_playing",
+      "updated_at": "2026-11-06T20:28:17",
+      "version": "1.0.0",
+      "author": "Windy-X211",
+      "name": "角色扮演",
+      "description": "沉浸式角色扮演，保持人设一致进行对话。当用户说\"扮演\"\"cosplay\"\"角色\"\"人设\"\"模拟\"\"扮演成 XX\"时加载此技能。",
+      "icon": "🧠",
+      "tags": [
+        "creative",
+        "persona",
+        "dialog"
+      ],
+      "label": "角色扮演",
+      "skill_name": "role-playing"
+    },
+    {
+      "kind": "skill",
+      "id": "web_demo",
+      "dir": "skills/web_demo",
+      "updated_at": "2026-11-06T20:28:17",
+      "version": "1.1.0",
+      "author": "Windy-X211",
+      "name": "Web 演示页面生成",
+      "description": "生成美观、响应式、交互性强的完整 HTML/CSS/JS 网页演示。当用户说\"演示网页\"\"做个网页\"\"前端演示\"\"HTML 页面\"\"落地页\"\"展示页面\"\"交互效果\"\"动画效果\"或任何包含\"html\"\"demo\"\"网页\"的请求时加载此技能。",
+      "icon": "🧠",
+      "tags": [
+        "web",
+        "html",
+        "css",
+        "javascript",
+        "demo",
+        "frontend"
+      ],
+      "label": "Web 演示页面生成",
+      "skill_name": "web_demo"
+    },
     {
       "kind": "plugin",
       "id": "browser_control",
