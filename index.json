@@ -1,7 +1,27 @@
 {
   "version": "1.0",
-  "updated_at": "2026-11-06T19:53:05",
+  "updated_at": "2026-11-06T20:09:29",
   "items": [
+    {
+      "kind": "canvas",
+      "id": "canvas-1006",
+      "name": "图片绘制团队",
+      "description": "程序化绘图集群：需求策划 → 代码绘图（matplotlib/PIL/SVG，非AI生图）→ 图片验收交付",
+      "version": "1.0.0",
+      "author": "Windy-X211",
+      "icon": "🗺",
+      "tags": [
+        "3 节点",
+        "3 智能体"
+      ],
+      "dir": "canvases/canvas-1006",
+      "file": "canvas.json",
+      "updated_at": "2026-11-06T20:09:29",
+      "origin_canvas_id": 1006,
+      "agent_count": 3,
+      "agent_group_count": 1,
+      "has_agents_dir": true
+    },
     {
       "kind": "background",
       "id": "ice-snowland",
