@@ -1,7 +1,27 @@
 {
   "version": "1.0",
-  "updated_at": "2026-11-06T18:59:20",
+  "updated_at": "2026-11-06T19:02:50",
   "items": [
+    {
+      "kind": "canvas",
+      "id": "canvas-1002",
+      "name": "游戏制作团队",
+      "description": "专业游戏制作集群，从项目立项到技术实现的完整工作流",
+      "version": "1.0.0",
+      "author": "Windy-X211",
+      "icon": "🗺",
+      "tags": [
+        "7 节点",
+        "7 智能体"
+      ],
+      "dir": "canvases/canvas-1002",
+      "file": "canvas.json",
+      "updated_at": "2026-11-06T19:02:50",
+      "origin_canvas_id": 1002,
+      "agent_count": 7,
+      "agent_group_count": 1,
+      "has_agents_dir": true
+    },
     {
       "kind": "background",
       "id": "water-ripple",
