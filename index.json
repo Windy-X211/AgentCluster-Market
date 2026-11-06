@@ -1,72 +1,7 @@
 {
   "version": "1.0",
-  "updated_at": "2026-11-06T12:38:50",
+  "updated_at": "2026-11-06T12:39:24",
   "items": [
-    {
-      "kind": "canvas",
-      "id": "canvas-1002",
-      "name": "游戏制作团队",
-      "description": "专业游戏制作集群，从项目立项到技术实现的完整工作流",
-      "version": "1.0.0",
-      "author": "AgentCluster",
-      "icon": "🗺",
-      "tags": [
-        "7 节点"
-      ],
-      "dir": "canvases/canvas-1002",
-      "file": "canvas.json",
-      "updated_at": "2026-11-05T22:57:13",
-      "origin_canvas_id": 1002,
-      "agent_count": 7
-    },
-    {
-      "kind": "agent",
-      "id": "cluster-orchestrator",
-      "name": "集群编排师",
-      "description": "自然语言对话，帮你创建/修改多智能体集群",
-      "version": "1.0.0",
-      "author": "AgentCluster",
-      "icon": "🧠",
-      "tags": [
-        "系统",
-        "编排"
-      ],
-      "dir": "agents/cluster-orchestrator",
-      "file": "agent.json",
-      "updated_at": "2026-11-05T20:53:41"
-    },
-    {
-      "kind": "agent",
-      "id": "capability-generator",
-      "name": "能力生成师",
-      "description": "按 AgentCluster 规范生成技能与插件",
-      "version": "1.0.0",
-      "author": "AgentCluster",
-      "icon": "🛠",
-      "tags": [
-        "系统",
-        "能力生成"
-      ],
-      "dir": "agents/capability-generator",
-      "file": "agent.json",
-      "updated_at": "2026-11-05T20:53:41"
-    },
-    {
-      "kind": "agent",
-      "id": "background-generator",
-      "name": "背景生成师",
-      "description": "按规范生成界面背景（动画/视频/图片）",
-      "version": "1.0.0",
-      "author": "AgentCluster",
-      "icon": "🎨",
-      "tags": [
-        "系统",
-        "背景生成"
-      ],
-      "dir": "agents/background-generator",
-      "file": "agent.json",
-      "updated_at": "2026-11-05T20:53:41"
-    },
     {
       "kind": "background",
       "id": "aurora",
