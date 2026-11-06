@@ -1,0 +1,23 @@
+{
+  "options": {
+    "max_tools": 48,
+    "call_timeout": 120,
+    "startup_wait": 3
+  },
+  "servers": [
+    {
+      "id": "dsh",
+      "name": "dsh",
+      "enabled": true,
+      "transport": "http",
+      "command": "",
+      "args": [],
+      "cwd": "",
+      "env": {},
+      "url": "http://127.0.0.1:8391/mcp",
+      "headers": {},
+      "timeout": 120,
+      "agents": "all"
+    }
+  ]
+}

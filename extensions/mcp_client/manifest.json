@@ -1,0 +1,19 @@
+{
+    "id": "mcp_client",
+    "name": "MCP 客户端",
+    "version": "1.0.0",
+    "type": "hybrid",
+    "author": "AgentCluster",
+    "description": "连接外部 MCP 服务器（stdio 子进程 / Streamable HTTP / SSE），自动把对方提供的工具注入智能体的 function calling，智能体可直接调用这些外部工具。",
+    "icon": "🔗",
+    "tags": [
+        "mcp",
+        "client",
+        "tools",
+        "integration"
+    ],
+    "source": "builtin",
+    "frontend_files": [],
+    "backend_entry": "backend",
+    "config_page": "config.html"
+}
