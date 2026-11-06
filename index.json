@@ -1,16 +1,5 @@
 {
   "version": "1.0",
-  "updated_at": "2026-11-06T13:36:32",
-  "items": [
-    {
-      "kind": "extension",
-      "id": "visual_interaction",
-      "name": "visual_interaction",
-      "author": "Windy-X211",
-      "version": "1.0.0",
-      "dir": "extensions/visual_interaction",
-      "file": "manifest.json",
-      "updated_at": "2026-11-06T13:36:32"
-    }
-  ]
+  "updated_at": "2026-11-06T13:48:51",
+  "items": []
 }
