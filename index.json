@@ -1,7 +1,174 @@
 {
   "version": "1.0",
-  "updated_at": "2026-11-06T20:28:17",
+  "updated_at": "2026-11-06T22:43:50",
   "items": [
+    {
+      "kind": "background",
+      "id": "meteor-shower",
+      "dir": "backgrounds/meteor-shower",
+      "updated_at": "2026-11-06T22:43:50",
+      "version": "1.0.0",
+      "author": "Windy-X211",
+      "name": "流星雨",
+      "description": "流星自辐射点齐整爆发，金色拖尾连绵扫过夜空",
+      "icon": "🎨",
+      "tags": [
+        "animation"
+      ],
+      "preview": "radial-gradient(ellipse at 70% 20%, #2a1a40 0%, #0a0612 70%)",
+      "bg_type": "animation",
+      "entry": "background.html"
+    },
+    {
+      "kind": "background",
+      "id": "solar-system",
+      "dir": "backgrounds/solar-system",
+      "updated_at": "2026-11-06T22:43:50",
+      "version": "1.0.0",
+      "author": "Windy-X211",
+      "name": "太阳系",
+      "description": "倾斜俯瞰太阳系，行星具立体光影与大气晕，深邃宏大",
+      "icon": "🎨",
+      "tags": [
+        "animation"
+      ],
+      "preview": "radial-gradient(ellipse at 50% 55%, #2a1a3a 0%, #0a0a1e 50%, #050510 100%)",
+      "bg_type": "animation",
+      "entry": "background.html"
+    },
+    {
+      "kind": "background",
+      "id": "starfield",
+      "dir": "backgrounds/starfield",
+      "updated_at": "2026-11-06T22:43:50",
+      "version": "1.0.0",
+      "author": "Windy-X211",
+      "name": "星空",
+      "description": "深邃星空，繁星闪烁，偶有流星划过",
+      "icon": "🎨",
+      "tags": [
+        "animation"
+      ],
+      "preview": "radial-gradient(circle at 50% 40%, #1a2340 0%, #050816 70%)",
+      "bg_type": "animation",
+      "entry": "background.html"
+    },
+    {
+      "kind": "background",
+      "id": "three-body",
+      "dir": "backgrounds/three-body",
+      "updated_at": "2026-11-06T22:43:50",
+      "version": "1.0.0",
+      "author": "Windy-X211",
+      "name": "三体混沌",
+      "description": "三颗质量相近、颜色各异的星体在万有引力下演绎三体问题——轨道不可解析、对初始条件极度敏感的混沌之舞",
+      "icon": "🎨",
+      "tags": [
+        "animation"
+      ],
+      "preview": "radial-gradient(circle at 50% 50%, #0a0518 0%, #05030a 55%, #020308 100%)",
+      "bg_type": "animation",
+      "entry": "background.html"
+    },
+    {
+      "kind": "background",
+      "id": "aurora",
+      "dir": "backgrounds/aurora",
+      "updated_at": "2026-11-06T22:43:50",
+      "version": "1.0.0",
+      "author": "Windy-X211",
+      "name": "极光",
+      "description": "流动极光，色彩柔和漫卷天际",
+      "icon": "🎨",
+      "tags": [
+        "animation"
+      ],
+      "preview": "linear-gradient(135deg, #0a1a2a 0%, #0d3b2e 40%, #1a2a4a 100%)",
+      "bg_type": "animation",
+      "entry": "background.html"
+    },
+    {
+      "kind": "background",
+      "id": "fireworks",
+      "dir": "backgrounds/fireworks",
+      "updated_at": "2026-11-06T22:43:50",
+      "version": "1.0.0",
+      "author": "Windy-X211",
+      "name": "烟花绽放",
+      "description": "绚烂烟花在夜空接连绽放：球状、垂柳、菊花、棕榈、十字、双层环、闪烁多层爆裂，色彩斑斓震撼。点击或触摸任意位置即可在该处发射烟花",
+      "icon": "🎨",
+      "tags": [
+        "animation"
+      ],
+      "preview": "radial-gradient(circle at 50% 72%, #3a1028 0%, #120620 45%, #050208 100%)",
+      "bg_type": "animation",
+      "entry": "background.html"
+    },
+    {
+      "kind": "agent",
+      "id": "agent-8",
+      "name": "集群编排师",
+      "description": "自然语言对话，帮你创建/修改多智能体集群",
+      "version": "1.0.0",
+      "author": "Windy-X211",
+      "icon": "🤖",
+      "tags": [
+        "系统",
+        "编排"
+      ],
+      "dir": "agents/agent-8",
+      "file": "agent.json",
+      "updated_at": "2026-11-06T22:43:49",
+      "origin_agent_id": 8
+    },
+    {
+      "kind": "agent",
+      "id": "agent-41",
+      "name": "通用",
+      "description": "",
+      "version": "1.0.0",
+      "author": "Windy-X211",
+      "icon": "🤖",
+      "tags": [],
+      "dir": "agents/agent-41",
+      "file": "agent.json",
+      "updated_at": "2026-11-06T22:43:49",
+      "origin_agent_id": 41
+    },
+    {
+      "kind": "agent",
+      "id": "agent-38",
+      "name": "背景生成师",
+      "description": "按规范生成界面背景（动画/视频/图片）",
+      "version": "1.0.0",
+      "author": "Windy-X211",
+      "icon": "🤖",
+      "tags": [
+        "系统",
+        "背景生成"
+      ],
+      "dir": "agents/agent-38",
+      "file": "agent.json",
+      "updated_at": "2026-11-06T22:43:49",
+      "origin_agent_id": 38
+    },
+    {
+      "kind": "agent",
+      "id": "agent-27",
+      "name": "能力生成师",
+      "description": "按 AgentCluster 规范生成技能与插件",
+      "version": "1.0.0",
+      "author": "Windy-X211",
+      "icon": "🤖",
+      "tags": [
+        "系统",
+        "能力生成"
+      ],
+      "dir": "agents/agent-27",
+      "file": "agent.json",
+      "updated_at": "2026-11-06T22:43:49",
+      "origin_agent_id": 27
+    },
     {
       "kind": "skill",
       "id": "lx-music-control",

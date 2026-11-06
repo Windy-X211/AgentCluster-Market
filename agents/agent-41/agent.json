@@ -1,0 +1,38 @@
+{
+  "name": "通用",
+  "description": "",
+  "system_prompt": "你是一个智能助手，可以调用工具解决用户的需求",
+  "reasoning_level": "off",
+  "commands": [
+    "file.read",
+    "file.write",
+    "file.delete",
+    "file.replace",
+    "file.patch",
+    "file.structure",
+    "file.search",
+    "file.find",
+    "workspace.search",
+    "cmd.run",
+    "cmd.bg_list",
+    "cmd.bg_stop",
+    "cmd.bg_log",
+    "agent.smart_search",
+    "agent.spawn"
+  ],
+  "skills": [],
+  "plugins": [
+    "http_request",
+    "browser_control"
+  ],
+  "trigger": {
+    "type": "manual",
+    "cron": "",
+    "message": ""
+  },
+  "tags": [],
+  "max_tool_rounds": null,
+  "enabled": true,
+  "perception_scope": "link",
+  "workflow_mode": "none"
+}

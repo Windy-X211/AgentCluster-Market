@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="zh">
+
+<head>
+    <meta charset="UTF-8">
+    <title>三体混沌</title>
+    <style>
+        html,
+        body {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            overflow: hidden;
+            background: transparent;
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+    </style>
+</head>
+
+<body>
+    <canvas id="c"></canvas>
+    <script>
+        (function () {
+            const cv = document.getElementById('c');
+            const ctx = cv.getContext('2d');
+            let W = 0, H = 0, dpr = Math.min(window.devicePixelRatio || 1, 2);
+            let scX = 0, scY = 0;
+            let starsFar = [], starsNear = [];
+            const reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+            // ---- 物理常量（自然单位）----
+            const G = 1.0;
+            const EPS2 = 0.045 * 0.045;   // 软化平方，防近距离奇点
+            const DT = 0.0022;            // 积分步长
+            const SUB = 4;                // 每帧子步数，提高精度
+            const TRAIL_MAX = 520;        // 轨迹点上限
+            const RESET_R = 13;           // 最大离散倍数（相对特征长度），超过则重置
+
+            // 三颗星体：质量相近、颜色各异
+            const COLORS = [
+                [255, 70, 70],    // 红
+                [70, 130, 255],   // 蓝
+                [255, 218, 64]    // 黄
+            ];
+            const MASSES = [1.0, 0.92, 1.08];
+
+            let bodies = [];
+            let L0 = 1;            // 特征长度（初始平均间距）
+            let viewScale = 1;     // 自适应缩放（平滑）
+            let viewCX = 0, viewCY = 0; // 视图中心（跟随质心，平滑）
+
+            function rgba(c, a) { return 'rgba(' + (c[0] | 0) + ',' + (c[1] | 0) + ',' + (c[2] | 0) + ',' + a + ')'; }
+            function rgb(c) { return 'rgb(' + (c[0] | 0) + ',' + (c[1] | 0) + ',' + (c[2] | 0) + ')'; }
+
+            // ---- 随机生成混沌初始条件（总动量归零，质心在原点）----
+            function resetBodies() {
+                let pos = [], vel = [];
+                for (let i = 0; i < 3; i++) {
+                    const a = (i / 3) * 6.2831853 + (Math.random() - 0.5) * 0.9;
+                    const r = 0.9 + Math.random() * 0.5;
+                    pos.push([Math.cos(a) * r, Math.sin(a) * r]);
+                }
+                // 随机速度（量级 ~0.5），扣除质心速度使总动量为 0
+                let pVX = 0, pVY = 0, pM = 0;
+                for (let i = 0; i < 3; i++) {
+                    const sp = 0.35 + Math.random() * 0.35;
+                    const dir = Math.random() * 6.2831853;
+                    vel.push([Math.cos(dir) * sp, Math.sin(dir) * sp]);
+                    pVX += MASSES[i] * vel[i][0];
+                    pVY += MASSES[i] * vel[i][1];
+                    pM += MASSES[i];
+                }
+                for (let i = 0; i < 3; i++) {
+                    vel[i][0] -= pVX / pM;
+                    vel[i][1] -= pVY / pM;
+                }
+                // 质心归零
+                let cX = 0, cY = 0;
+                for (let i = 0; i < 3; i++) { cX += MASSES[i] * pos[i][0]; cY += MASSES[i] * pos[i][1]; }
+                cX /= pM; cY /= pM;
+                for (let i = 0; i < 3; i++) { pos[i][0] -= cX; pos[i][1] -= cY; }
+
+                // 特征长度 = 平均两两间距
+                let sumD = 0, n = 0;
+                for (let i = 0; i < 3; i++) for (let j = i + 1; j < 3; j++) {
+                    sumD += Math.hypot(pos[i][0] - pos[j][0], pos[i][1] - pos[j][1]); n++;
+                }
+                L0 = sumD / n;
+
+                bodies = [];
+                for (let i = 0; i < 3; i++) {
+                    bodies.push({
+                        m: MASSES[i],
+                        x: pos[i][0], y: pos[i][1],
+                        vx: vel[i][0], vy: vel[i][1],
+                        ax: 0, ay: 0,
+                        color: COLORS[i],
+                        trail: []
+                    });
+                }
+                computeAcc();
+            }
+
+            // ---- 计算各体引力加速度（ softened ）----
+            function computeAcc() {
+                for (let i = 0; i < 3; i++) { bodies[i].ax = 0; bodies[i].ay = 0; }
+                for (let i = 0; i < 3; i++) {
+                    for (let j = i + 1; j < 3; j++) {
+                        const dx = bodies[j].x - bodies[i].x;
+                        const dy = bodies[j].y - bodies[i].y;
+                        const d2 = dx * dx + dy * dy + EPS2;
+                        const inv = 1 / Math.sqrt(d2);
+                        const f = G * inv * inv * inv; // 1/d^3
+                        bodies[i].ax += f * bodies[j].m * dx;
+                        bodies[i].ay += f * bodies[j].m * dy;
+                        bodies[j].ax -= f * bodies[i].m * dx;
+                        bodies[j].ay -= f * bodies[i].m * dy;
+                    }
+                }
+            }
+
+            // ---- Velocity Verlet 辛积分（能量长期守恒好）----
+            function step() {
+                const h = DT;
+                const h2 = 0.5 * h;
+                for (let i = 0; i < 3; i++) {
+                    bodies[i].x += bodies[i].vx * h + bodies[i].ax * h * h * 0.5;
+                    bodies[i].y += bodies[i].vy * h + bodies[i].ay * h * h * 0.5;
+                }
+                const ax0 = [bodies[0].ax, bodies[1].ax, bodies[2].ax];
+                const ay0 = [bodies[0].ay, bodies[1].ay, bodies[2].ay];
+                computeAcc();
+                for (let i = 0; i < 3; i++) {
+                    bodies[i].vx += (ax0[i] + bodies[i].ax) * h2;
+                    bodies[i].vy += (ay0[i] + bodies[i].ay) * h2;
+                }
+            }
+
+            function badState() {
+                for (let i = 0; i < 3; i++) {
+                    if (!isFinite(bodies[i].x) || !isFinite(bodies[i].y) ||
+                        !isFinite(bodies[i].vx) || !isFinite(bodies[i].vy)) return true;
+                }
+                return false;
+            }
+
+            function maxDistFromCOM() {
+                let cX = 0, cY = 0, pM = 0;
+                for (let i = 0; i < 3; i++) { cX += bodies[i].m * bodies[i].x; cY += bodies[i].m * bodies[i].y; pM += bodies[i].m; }
+                cX /= pM; cY /= pM;
+                let mx = 0;
+                for (let i = 0; i < 3; i++) { const d = Math.hypot(bodies[i].x - cX, bodies[i].y - cY); if (d > mx) mx = d; }
+                return mx;
+            }
+
+            function resize() {
+                W = window.innerWidth; H = window.innerHeight;
+                cv.width = W * dpr; cv.height = H * dpr;
+                cv.style.width = W + 'px'; cv.style.height = H + 'px';
+                ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+                scX = W / 2; scY = H / 2;
+            }
+
+            function initStars() {
+                const nFar = Math.min(240, Math.floor(W * H / 7500));
+                starsFar = [];
+                for (let i = 0; i < nFar; i++) starsFar.push({
+                    x: Math.random() * W, y: Math.random() * H,
+                    r: Math.random() * 0.9 + 0.2,
+                    a: Math.random() * 6.283, s: Math.random() * 0.018 + 0.003
+                });
+                const nNear = Math.min(30, Math.floor(W * H / 58000));
+                starsNear = [];
+                for (let i = 0; i < nNear; i++) starsNear.push({
+                    x: Math.random() * W, y: Math.random() * H,
+                    r: Math.random() * 1.4 + 1.0,
+                    a: Math.random() * 6.283, s: Math.random() * 0.03 + 0.008,
+                    hue: Math.random() < 0.3 ? [180, 200, 255] : (Math.random() < 0.5 ? [255, 235, 200] : [255, 255, 255])
+                });
+            }
+
+            const nebulae = [
+                { x: 0.22, y: 0.30, r: 0.50, color: [80, 35, 120], a: 0.08 },
+                { x: 0.80, y: 0.74, r: 0.55, color: [25, 60, 130], a: 0.06 },
+                { x: 0.74, y: 0.20, r: 0.40, color: [130, 50, 90], a: 0.04 }
+            ];
+
+            function lerp(a, b, t) { return a + (b - a) * t; }
+
+            function frame() {
+                // ---- 物理推进（reduced-motion 时减半速度）----
+                const steps = reduced ? Math.max(1, SUB >> 1) : SUB;
+                for (let s = 0; s < steps; s++) step();
+
+                if (badState() || maxDistFromCOM() > RESET_R * L0) {
+                    resetBodies();
+                }
+
+                // ---- 质心 & 自适应缩放（平滑跟随）----
+                let cX = 0, cY = 0, pM = 0;
+                for (let i = 0; i < 3; i++) { cX += bodies[i].m * bodies[i].x; cY += bodies[i].m * bodies[i].y; pM += bodies[i].m; }
+                cX /= pM; cY /= pM;
+                let mx = 0;
+                for (let i = 0; i < 3; i++) { const d = Math.hypot(bodies[i].x - cX, bodies[i].y - cY); if (d > mx) mx = d; }
+                const minSide = Math.min(W, H);
+                const targetScale = (minSide * 0.34) / Math.max(mx, L0 * 0.5);
+                viewScale = lerp(viewScale, targetScale, 0.06);
+                viewCX = lerp(viewCX, cX, 0.08);
+                viewCY = lerp(viewCY, cY, 0.08);
+
+                // 记录轨迹（世界坐标）
+                for (let i = 0; i < 3; i++) {
+                    bodies[i].trail.push(bodies[i].x, bodies[i].y);
+                    if (bodies[i].trail.length > TRAIL_MAX * 2) bodies[i].trail.splice(0, 2);
+                }
+
+                // ---- 绘制 ----
+                ctx.fillStyle = '#020308';
+                ctx.fillRect(0, 0, W, H);
+
+                // 星云
+                for (const n of nebulae) {
+                    const nx = n.x * W, ny = n.y * H, nr = n.r * Math.max(W, H);
+                    const g = ctx.createRadialGradient(nx, ny, 0, nx, ny, nr);
+                    g.addColorStop(0, rgba(n.color, n.a));
+                    g.addColorStop(1, rgba(n.color, 0));
+                    ctx.fillStyle = g;
+                    ctx.beginPath(); ctx.arc(nx, ny, nr, 0, 6.283); ctx.fill();
+                }
+
+                // 星空
+                for (const st of starsFar) {
+                    st.a += st.s;
+                    const tw = 0.35 + 0.65 * Math.sin(st.a);
+                    ctx.globalAlpha = tw * 0.6;
+                    ctx.fillStyle = '#ffffff';
+                    ctx.beginPath(); ctx.arc(st.x, st.y, st.r, 0, 6.283); ctx.fill();
+                }
+                for (const st of starsNear) {
+                    st.a += st.s;
+                    const tw = 0.4 + 0.6 * Math.sin(st.a);
+                    ctx.globalAlpha = tw;
+                    ctx.fillStyle = rgb(st.hue);
+                    ctx.beginPath(); ctx.arc(st.x, st.y, st.r, 0, 6.283); ctx.fill();
+                    if (tw > 0.85) {
+                        ctx.globalAlpha = (tw - 0.85) * 0.5;
+                        ctx.beginPath(); ctx.arc(st.x, st.y, st.r * 3, 0, 6.283); ctx.fill();
+                    }
+                }
+                ctx.globalAlpha = 1;
+
+                // 世界 -> 屏幕
+                function wx(x) { return scX + (x - viewCX) * viewScale; }
+                function wy(y) { return scY + (y - viewCY) * viewScale; }
+
+                // 轨迹（分段渐变透明）
+                const SEG = 26;
+                for (let i = 0; i < 3; i++) {
+                    const tr = bodies[i].trail;
+                    const pts = tr.length / 2;
+                    if (pts < 2) continue;
+                    const per = Math.max(1, Math.floor(pts / SEG));
+                    ctx.lineCap = 'round';
+                    ctx.lineJoin = 'round';
+                    for (let s = 0; s < SEG; s++) {
+                        const a = s * per, b = Math.min(pts - 1, (s + 1) * per);
+                        if (b <= a) continue;
+                        const t = (s + 1) / SEG;
+                        ctx.strokeStyle = rgba(bodies[i].color, 0.04 + 0.62 * t * t);
+                        ctx.lineWidth = 0.6 + 1.6 * t;
+                        ctx.beginPath();
+                        ctx.moveTo(wx(tr[a * 2]), wy(tr[a * 2 + 1]));
+                        for (let k = a + 1; k <= b; k++) ctx.lineTo(wx(tr[k * 2]), wy(tr[k * 2 + 1]));
+                        ctx.stroke();
+                    }
+                }
+
+                // 星体（光晕 + 球体）
+                for (let i = 0; i < 3; i++) {
+                    const px = wx(bodies[i].x), py = wy(bodies[i].y);
+                    const pr = Math.max(4.5, 5.0 + 2.4 * (Math.cbrt(bodies[i].m) - 1));
+                    const c = bodies[i].color;
+                    // 外光晕
+                    let g = ctx.createRadialGradient(px, py, pr, px, py, pr * 6);
+                    g.addColorStop(0, rgba(c, 0.30));
+                    g.addColorStop(0.5, rgba(c, 0.08));
+                    g.addColorStop(1, rgba(c, 0));
+                    ctx.fillStyle = g;
+                    ctx.beginPath(); ctx.arc(px, py, pr * 6, 0, 6.283); ctx.fill();
+                    // 内光晕
+                    g = ctx.createRadialGradient(px, py, pr * 0.5, px, py, pr * 2.4);
+                    g.addColorStop(0, rgba(c, 0.55));
+                    g.addColorStop(1, rgba(c, 0));
+                    ctx.fillStyle = g;
+                    ctx.beginPath(); ctx.arc(px, py, pr * 2.4, 0, 6.283); ctx.fill();
+                    // 球体
+                    g = ctx.createRadialGradient(px - pr * 0.3, py - pr * 0.3, 0, px, py, pr);
+                    g.addColorStop(0, '#ffffff');
+                    g.addColorStop(0.3, rgb(c));
+                    g.addColorStop(1, rgba([c[0] * 0.35, c[1] * 0.35, c[2] * 0.35], 1));
+                    ctx.fillStyle = g;
+                    ctx.beginPath(); ctx.arc(px, py, pr, 0, 6.283); ctx.fill();
+                }
+
+                requestAnimationFrame(frame);
+            }
+
+            let rt = null;
+            window.addEventListener('resize', function () {
+                clearTimeout(rt); rt = setTimeout(function () { resize(); initStars(); }, 150);
+            });
+
+            const baseDT = DT;
+            resize(); initStars(); resetBodies();
+
+            requestAnimationFrame(frame);
+        })();
+    </script>
+</body>
+
+</html>

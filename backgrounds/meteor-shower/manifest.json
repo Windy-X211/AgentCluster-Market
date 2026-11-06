@@ -1,0 +1,10 @@
+{
+    "id": "meteor-shower",
+    "name": "流星雨",
+    "type": "animation",
+    "entry": "background.html",
+    "description": "流星自辐射点齐整爆发，金色拖尾连绵扫过夜空",
+    "preview": "radial-gradient(ellipse at 70% 20%, #2a1a40 0%, #0a0612 70%)",
+    "opacity": 1.0,
+    "builtin": true
+}

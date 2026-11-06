@@ -1,0 +1,10 @@
+{
+    "id": "starfield",
+    "name": "星空",
+    "type": "animation",
+    "entry": "background.html",
+    "description": "深邃星空，繁星闪烁，偶有流星划过",
+    "preview": "radial-gradient(circle at 50% 40%, #1a2340 0%, #050816 70%)",
+    "opacity": 1.0,
+    "builtin": true
+}

@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>烟花绽放</title>
+<style>
+    html, body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: transparent;
+    }
+    canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+    }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+(function () {
+    'use strict';
+
+    const cv = document.getElementById('c');
+    const ctx = cv.getContext('2d');
+
+    let W = 0, H = 0;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+
+    // 是否降低动效（前庭敏感用户）
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    // ---------- 颜色调色板（每个调色板为一组 RGB 颜色）----------
+    const C = {
+        white:  { r: 255, g: 255, b: 255 },
+        gold:   { r: 255, g: 200, b: 80 },
+        orange: { r: 255, g: 140, b: 40 },
+        red:    { r: 255, g: 60,  b: 80 },
+        pink:   { r: 255, g: 120, b: 180 },
+        green:  { r: 80,  g: 255, b: 130 },
+        teal:   { r: 40,  g: 225, b: 190 },
+        blue:   { r: 80,  g: 150, b: 255 },
+        cyan:   { r: 80,  g: 235, b: 255 },
+        purple: { r: 195, g: 90,  b: 255 },
+        magenta:{ r: 255, g: 90,  b: 220 }
+    };
+    const palettes = [
+        [C.gold, C.orange, C.white],            // 暖金
+        [C.red, C.pink, C.white],               // 红粉
+        [C.green, C.teal, C.white],             // 翠绿
+        [C.blue, C.cyan, C.white],              // 蔚蓝
+        [C.purple, C.magenta, C.white],         // 紫霞
+        [C.gold, C.red, C.cyan, C.purple],      // 彩虹
+        [C.cyan, C.magenta, C.white],           // 冰晶
+        [C.orange, C.pink, C.gold]              // 落日
+    ];
+    const pickPalette = () => palettes[(Math.random() * palettes.length) | 0];
+
+    // ---------- 爆裂图案 ----------
+    const patterns = ['peony', 'ring', 'willow', 'chrysanthemum', 'palm', 'crossette', 'double', 'strobe'];
+    const pickPattern = () => patterns[(Math.random() * patterns.length) | 0];
+
+    // ---------- 辉光精灵缓存（按颜色复用，避免每帧创建渐变）----------
+    const glowCache = {};
+    function glow(c) {
+        const k = c.r + ',' + c.g + ',' + c.b;
+        if (glowCache[k]) return glowCache[k];
+        const s = 36;
+        const oc = document.createElement('canvas');
+        oc.width = s; oc.height = s;
+        const o = oc.getContext('2d');
+        const g = o.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
+        g.addColorStop(0, 'rgba(255,255,255,1)');
+        g.addColorStop(0.18, 'rgba(' + c.r + ',' + c.g + ',' + c.b + ',0.95)');
+        g.addColorStop(0.5, 'rgba(' + c.r + ',' + c.g + ',' + c.b + ',0.35)');
+        g.addColorStop(1, 'rgba(' + c.r + ',' + c.g + ',' + c.b + ',0)');
+        o.fillStyle = g;
+        o.fillRect(0, 0, s, s);
+        glowCache[k] = oc;
+        return oc;
+    }
+
+    // ---------- 粒子 ----------
+    const MAX_PARTICLES = 1600;
+    let particles = [];
+    // 火箭（上升阶段）
+    let rockets = [];
+    // 爆裂闪光（短暂大光晕）
+    let flashes = [];
+    // 背景星
+    let stars = [];
+
+    function makeParticle(x, y, vx, vy, opts) {
+        return {
+            x: x, y: y, vx: vx, vy: vy,
+            px: x, py: y,                 // 上一帧位置（用于拖尾线段）
+            life: 0,
+            maxLife: opts.maxLife || 80,
+            color: opts.color,
+            size: opts.size || 2.4,
+            gravity: opts.gravity != null ? opts.gravity : 0.055,
+            drag: opts.drag != null ? opts.drag : 0.992,
+            trailLen: opts.trailLen || 6,
+            hist: [],                     // 拖尾历史点
+            flicker: !!opts.flicker,
+            willow: !!opts.willow,
+            split: !!opts.split,
+            dead: false
+        };
+    }
+
+    function updateParticle(p) {
+        p.px = p.x; p.py = p.y;
+        p.x += p.vx; p.y += p.vy;
+        p.vy += p.gravity;
+        p.vx *= p.drag; p.vy *= p.drag;
+        p.hist.push(p.x, p.y);
+        if (p.hist.length > p.trailLen * 2) p.hist.splice(0, 2);
+        p.life++;
+
+        // 十字分裂：到达半程时二次爆裂
+        if (p.split && p.life === Math.floor(p.maxLife * 0.45)) {
+            const n = 6;
+            for (let i = 0; i < n; i++) {
+                const a = (i / n) * Math.PI * 2 + Math.random() * 0.3;
+                const sp = 1.6 + Math.random() * 1.2;
+                particles.push(makeParticle(p.x, p.y, Math.cos(a) * sp, Math.sin(a) * sp, {
+                    color: p.color, maxLife: 34, gravity: 0.05, trailLen: 4, size: 1.8
+                }));
+            }
+        }
+
+        if (p.life >= p.maxLife) p.dead = true;
+    }
+
+    function drawParticle(p) {
+        let t = p.life / p.maxLife;
+        if (t > 1) t = 1;
+        let a = Math.sin(t * Math.PI);          // 淡入再淡出
+        if (a < 0) a = 0;
+        if (p.flicker) a *= 0.35 + 0.65 * Math.random();
+
+        ctx.globalCompositeOperation = 'lighter';
+
+        // 拖尾：沿历史点画发光线段
+        if (p.hist.length >= 4) {
+            ctx.strokeStyle = 'rgba(' + p.color.r + ',' + p.color.g + ',' + p.color.b + ',' + (a * 0.55) + ')';
+            ctx.lineWidth = p.size * 0.9;
+            ctx.lineCap = 'round';
+            ctx.beginPath();
+            ctx.moveTo(p.hist[0], p.hist[1]);
+            for (let i = 2; i < p.hist.length; i += 2) ctx.lineTo(p.hist[i], p.hist[i + 1]);
+            ctx.lineTo(p.x, p.y);
+            ctx.stroke();
+        }
+
+        // 头部辉光精灵
+        const sp = glow(p.color);
+        const r = p.size * 3.2;
+        ctx.globalAlpha = a;
+        ctx.drawImage(sp, p.x - r, p.y - r, r * 2, r * 2);
+        ctx.globalAlpha = 1;
+
+        ctx.globalCompositeOperation = 'source-over';
+    }
+
+    // ---------- 爆裂：根据图案生成粒子 ----------
+    function explode(x, y, pattern, palette) {
+        const pick = () => palette[(Math.random() * palette.length) | 0];
+
+        // 爆裂闪光
+        flashes.push({ x: x, y: y, life: 0, maxLife: 16, color: palette[0], r: 0 });
+
+        switch (pattern) {
+            case 'peony': { // 球状均匀爆裂
+                const n = 80 + ((Math.random() * 40) | 0);
+                for (let i = 0; i < n; i++) {
+                    const a = Math.random() * Math.PI * 2;
+                    const sp = (0.5 + Math.random() * 0.5) * (5 + Math.random() * 2);
+                    particles.push(makeParticle(x, y, Math.cos(a) * sp, Math.sin(a) * sp, {
+                        color: pick(), maxLife: 70 + (Math.random() * 30 | 0),
+                        gravity: 0.06, trailLen: 6
+                    }));
+                }
+                break;
+            }
+            case 'ring': { // 环形
+                const n = 64, sp = 5 + Math.random() * 1.6;
+                for (let i = 0; i < n; i++) {
+                    const a = (i / n) * Math.PI * 2;
+                    particles.push(makeParticle(x, y, Math.cos(a) * sp, Math.sin(a) * sp, {
+                        color: pick(), maxLife: 82, gravity: 0.04, trailLen: 5
+                    }));
+                }
+                break;
+            }
+            case 'willow': { // 垂柳：长尾下垂，金色调
+                const n = 70;
+                for (let i = 0; i < n; i++) {
+                    const a = Math.random() * Math.PI * 2;
+                    const sp = (0.45 + Math.random() * 0.5) * 3.6;
+                    particles.push(makeParticle(x, y, Math.cos(a) * sp, Math.sin(a) * sp, {
+                        color: pick(), maxLife: 130 + (Math.random() * 40 | 0),
+                        gravity: 0.085, drag: 0.982, trailLen: 12, willow: true, size: 2
+                    }));
+                }
+                break;
+            }
+            case 'chrysanthemum': { // 菊花：带长拖尾
+                const n = 96;
+                for (let i = 0; i < n; i++) {
+                    const a = Math.random() * Math.PI * 2;
+                    const sp = (0.35 + Math.random() * 0.65) * 6;
+                    particles.push(makeParticle(x, y, Math.cos(a) * sp, Math.sin(a) * sp, {
+                        color: pick(), maxLife: 92, gravity: 0.05, trailLen: 9
+                    }));
+                }
+                break;
+            }
+            case 'palm': { // 棕榈：少数粗壮上升后下垂
+                const n = 14;
+                for (let i = 0; i < n; i++) {
+                    const a = -Math.PI / 2 + (Math.random() - 0.5) * 0.9;
+                    const sp = 6 + Math.random() * 2.2;
+                    particles.push(makeParticle(x, y, Math.cos(a) * sp, Math.sin(a) * sp, {
+                        color: pick(), maxLife: 115, gravity: 0.08, drag: 0.985,
+                        trailLen: 14, size: 3.2
+                    }));
+                }
+                break;
+            }
+            case 'crossette': { // 十字：粒子中途二次分裂
+                const n = 24, sp = 5;
+                for (let i = 0; i < n; i++) {
+                    const a = (i / n) * Math.PI * 2;
+                    particles.push(makeParticle(x, y, Math.cos(a) * sp, Math.sin(a) * sp, {
+                        color: pick(), maxLife: 46, gravity: 0.04, trailLen: 4, split: true
+                    }));
+                }
+                break;
+            }
+            case 'double': { // 双层环：内外不同速度
+                const n1 = 48, sp1 = 3.4, n2 = 44, sp2 = 6.2;
+                for (let i = 0; i < n1; i++) {
+                    const a = Math.random() * Math.PI * 2;
+                    particles.push(makeParticle(x, y, Math.cos(a) * sp1, Math.sin(a) * sp1, {
+                        color: pick(), maxLife: 80, gravity: 0.05, trailLen: 6
+                    }));
+                }
+                for (let i = 0; i < n2; i++) {
+                    const a = Math.random() * Math.PI * 2;
+                    particles.push(makeParticle(x, y, Math.cos(a) * sp2, Math.sin(a) * sp2, {
+                        color: pick(), maxLife: 80, gravity: 0.05, trailLen: 6
+                    }));
+                }
+                break;
+            }
+            case 'strobe': { // 闪烁
+                const n = 56;
+                for (let i = 0; i < n; i++) {
+                    const a = Math.random() * Math.PI * 2;
+                    const sp = (0.45 + Math.random() * 0.55) * 4.6;
+                    particles.push(makeParticle(x, y, Math.cos(a) * sp, Math.sin(a) * sp, {
+                        color: pick(), maxLife: 90, gravity: 0.05, trailLen: 4, flicker: true
+                    }));
+                }
+                break;
+            }
+        }
+
+        // 粒子总量封顶（丢弃最旧的）
+        if (particles.length > MAX_PARTICLES) {
+            particles.splice(0, particles.length - MAX_PARTICLES);
+        }
+    }
+
+    // ---------- 火箭发射 ----------
+    function launchRocket(tx, ty) {
+        let x, targetY, vy;
+        if (tx != null && ty != null) {
+            // 点击发射：火箭从点击位置正下方升起，在点击处爆裂
+            x = tx;
+            targetY = ty;
+            // 依据目标高度计算所需初速度 vy² = 2·g·Δy，使火箭恰好到达点击点
+            const dy = (H + 12) - ty;
+            vy = -Math.max(7, Math.min(18, Math.sqrt(2 * 0.12 * dy)));
+        } else {
+            // 自动发射：随机位置与高度
+            x = W * (0.12 + Math.random() * 0.76);
+            targetY = H * (0.14 + Math.random() * 0.32);
+            vy = -(8.5 + Math.random() * 2.2);
+        }
+        rockets.push({
+            x: x, y: H + 12,
+            vx: (Math.random() - 0.5) * 0.8,
+            vy: vy,
+            ty: targetY,
+            gravity: 0.12,
+            palette: pickPalette(),
+            pattern: pickPattern(),
+            sparkT: 0
+        });
+    }
+
+    function updateRocket(r) {
+        r.x += r.vx; r.y += r.vy;
+        r.vy += r.gravity;
+
+        // 上升火花尾
+        r.sparkT++;
+        if (r.sparkT % 1 === 0) {
+            for (let i = 0; i < 2; i++) {
+                particles.push(makeParticle(
+                    r.x + (Math.random() - 0.5) * 2,
+                    r.y + (Math.random() - 0.5) * 2,
+                    (Math.random() - 0.5) * 1.2,
+                    1 + Math.random() * 1.5,
+                    { color: C.orange, maxLife: 18, gravity: 0.02, trailLen: 3, size: 1.6 }
+                ));
+            }
+        }
+
+        // 到达顶点或目标高度 → 爆裂
+        if (r.vy >= -0.4 || r.y <= r.ty) {
+            explode(r.x, r.y, r.pattern, r.palette);
+            r.dead = true;
+        }
+    }
+
+    function drawRocket(r) {
+        ctx.globalCompositeOperation = 'lighter';
+        // 上升光迹
+        const sp = glow(C.gold);
+        const rr = 5;
+        ctx.globalAlpha = 0.9;
+        ctx.drawImage(sp, r.x - rr, r.y - rr, rr * 2, rr * 2);
+        ctx.globalAlpha = 1;
+        ctx.globalCompositeOperation = 'source-over';
+    }
+
+    // ---------- 闪光 ----------
+    function drawFlash(f) {
+        let t = f.life / f.maxLife;
+        if (t > 1) t = 1;
+        const a = (1 - t);
+        f.r = 40 + t * 120;
+        ctx.globalCompositeOperation = 'lighter';
+        const sp = glow(f.color);
+        const rr = f.r;
+        ctx.globalAlpha = a * 0.8;
+        ctx.drawImage(sp, f.x - rr, f.y - rr, rr * 2, rr * 2);
+        ctx.globalAlpha = 1;
+        ctx.globalCompositeOperation = 'source-over';
+        f.life++;
+    }
+
+    // ---------- 背景星 ----------
+    function initStars() {
+        stars = [];
+        const n = Math.min(140, (W * H / 14000) | 0);
+        for (let i = 0; i < n; i++) {
+            stars.push({
+                x: Math.random() * W,
+                y: Math.random() * H * 0.85,
+                r: Math.random() * 1.1 + 0.2,
+                a: Math.random() * Math.PI * 2,
+                s: Math.random() * 0.02 + 0.004,
+                base: 0.3 + Math.random() * 0.4
+            });
+        }
+    }
+
+    // ---------- 调度 ----------
+    let spawnTimer = 0;
+    let nextSpawn = 30;
+
+    function schedule() {
+        spawnTimer++;
+        if (spawnTimer >= nextSpawn) {
+            spawnTimer = 0;
+            // 偶尔齐放多枚
+            const volley = Math.random() < 0.22 ? 2 + ((Math.random() * 3) | 0) : 1;
+            for (let i = 0; i < volley; i++) {
+                setTimeout(launchRocket, i * 120 + ((Math.random() * 80) | 0));
+            }
+            // 节奏：0.7s ~ 2.1s
+            nextSpawn = (reduced ? 120 : 42) + ((Math.random() * (reduced ? 120 : 84)) | 0);
+        }
+    }
+
+    // ---------- 主循环 ----------
+    function frame() {
+        ctx.clearRect(0, 0, W, H);
+
+        // 背景星闪烁
+        for (const st of stars) {
+            st.a += st.s;
+            const tw = st.base + 0.35 * Math.sin(st.a);
+            ctx.globalAlpha = Math.max(0, Math.min(1, tw));
+            ctx.fillStyle = '#dfe6ff';
+            ctx.beginPath();
+            ctx.arc(st.x, st.y, st.r, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+
+        schedule();
+
+        // 火箭
+        for (let i = rockets.length - 1; i >= 0; i--) {
+            const r = rockets[i];
+            updateRocket(r);
+            if (!r.dead) drawRocket(r);
+            else rockets.splice(i, 1);
+        }
+
+        // 闪光
+        for (let i = flashes.length - 1; i >= 0; i--) {
+            const f = flashes[i];
+            drawFlash(f);
+            if (f.life >= f.maxLife) flashes.splice(i, 1);
+        }
+
+        // 粒子
+        for (let i = particles.length - 1; i >= 0; i--) {
+            const p = particles[i];
+            updateParticle(p);
+            drawParticle(p);
+            if (p.dead || p.y > H + 60 || p.x < -60 || p.x > W + 60) {
+                particles.splice(i, 1);
+            }
+        }
+
+        requestAnimationFrame(frame);
+    }
+
+    // ---------- 尺寸 ----------
+    function resize() {
+        W = window.innerWidth;
+        H = window.innerHeight;
+        cv.width = W * dpr;
+        cv.height = H * dpr;
+        cv.style.width = W + 'px';
+        cv.style.height = H + 'px';
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        initStars();
+    }
+
+    function init() {
+        particles = [];
+        rockets = [];
+        flashes = [];
+        // 开场连放几枚，迅速进入盛况
+        launchRocket();
+        setTimeout(launchRocket, 260);
+        setTimeout(launchRocket, 560);
+        setTimeout(launchRocket, 900);
+    }
+
+    let resizeTimer = null;
+    window.addEventListener('resize', function () {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(function () { resize(); init(); }, 150);
+    });
+
+    // ---------- 点击 / 触摸发射烟花 ----------
+    // 点击产生一条从底部升起的火箭，在点击位置爆裂。
+    function launchAt(x, y) {
+        
+        
+        
+        // 点击处的微光涟漪反馈
+        flashes.push({ x: x, y: y, life: 0, maxLife: 14, color: C.white, r: 0 });
+        launchRocket(x, y);
+    }
+
+    // 限制点击连发节奏，避免粒子爆炸
+    let lastTap = 0;
+    function onTap(x, y) {
+        const now = performance.now();
+        if (now - lastTap < 90) return;
+        lastTap = now;
+        launchAt(x, y);
+    }
+
+    // 交互机制：背景层在父页面中被 pointer-events: none 屏蔽，鼠标/触摸事件由父页面
+    // 在 window 上捕获后，以归一化坐标通过 postMessage 转发给本 iframe。
+    // 收到 type='bg-pointer'、kind='down' 的消息时，换算回画布坐标并发射烟花。
+    window.addEventListener('message', function (ev) {
+        if (!ev.data || ev.data.type !== 'bg-pointer') return;
+        if (ev.data.kind === 'down') {
+            onTap(ev.data.x * W, ev.data.y * H);
+        }
+    });
+    // 本 iframe 被父页面设为 pointer-events: none，交互统一走 postMessage 转发（见上）。
+    
+    
+
+    resize();
+    init();
+    requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

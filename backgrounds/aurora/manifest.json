@@ -1,0 +1,10 @@
+{
+    "id": "aurora",
+    "name": "极光",
+    "type": "animation",
+    "entry": "background.html",
+    "description": "流动极光，色彩柔和漫卷天际",
+    "preview": "linear-gradient(135deg, #0a1a2a 0%, #0d3b2e 40%, #1a2a4a 100%)",
+    "opacity": 1.0,
+    "builtin": true
+}
