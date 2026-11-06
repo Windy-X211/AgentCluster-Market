@@ -1,7 +1,21 @@
 {
   "version": "1.0",
-  "updated_at": "2026-11-06T13:59:58",
+  "updated_at": "2026-11-06T14:58:44",
   "items": [
+    {
+      "kind": "agent",
+      "id": "agent-3",
+      "name": "小说作家",
+      "description": "",
+      "version": "1.0.0",
+      "author": "Windy-X211",
+      "icon": "🤖",
+      "tags": [],
+      "dir": "agents/agent-3",
+      "file": "agent.json",
+      "updated_at": "2026-11-06T14:58:44",
+      "origin_agent_id": 3
+    },
     {
       "kind": "extension",
       "id": "fairy_ball",

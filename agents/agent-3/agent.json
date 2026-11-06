@@ -1,0 +1,30 @@
+{
+  "name": "小说作家",
+  "description": "",
+  "system_prompt": "你是一名小说作家",
+  "commands": [
+    "file.read",
+    "file.write",
+    "file.delete",
+    "file.structure",
+    "file.patch",
+    "file.replace",
+    "file.search"
+  ],
+  "skills": [
+    "novel_writing"
+  ],
+  "plugins": [
+    "send_email"
+  ],
+  "trigger": {
+    "type": "manual",
+    "cron": "",
+    "message": ""
+  },
+  "tags": [],
+  "enabled": true,
+  "max_tool_rounds": null,
+  "perception_scope": "link",
+  "workflow_mode": "goal"
+}
