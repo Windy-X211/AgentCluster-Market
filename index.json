@@ -1,7 +1,41 @@
 {
   "version": "1.0",
-  "updated_at": "2026-11-05T22:14:12",
+  "updated_at": "2026-11-06T08:38:56",
   "items": [
+    {
+      "kind": "canvas",
+      "id": "ppt",
+      "name": "PPT制作团队",
+      "description": "专业PPT制作集群，从需求分析到视觉设计的完整工作流",
+      "version": "1.0.0",
+      "author": "AgentCluster",
+      "icon": "🗺",
+      "tags": [
+        "5 节点"
+      ],
+      "dir": "canvases/ppt",
+      "file": "canvas.json",
+      "updated_at": "2026-11-06T08:38:56",
+      "origin_canvas_id": 1000,
+      "agent_count": 5
+    },
+    {
+      "kind": "canvas",
+      "id": "canvas-1002",
+      "name": "游戏制作团队",
+      "description": "专业游戏制作集群，从项目立项到技术实现的完整工作流",
+      "version": "1.0.0",
+      "author": "AgentCluster",
+      "icon": "🗺",
+      "tags": [
+        "7 节点"
+      ],
+      "dir": "canvases/canvas-1002",
+      "file": "canvas.json",
+      "updated_at": "2026-11-05T22:57:13",
+      "origin_canvas_id": 1002,
+      "agent_count": 7
+    },
     {
       "kind": "canvas",
       "id": "canvas-1006",
