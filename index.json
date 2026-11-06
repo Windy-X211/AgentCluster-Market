@@ -1,20 +1,41 @@
 {
   "version": "1.0",
-  "updated_at": "2026-11-06T09:04:21",
+  "updated_at": "2026-11-06T09:10:25",
   "items": [
     {
-      "kind": "agent",
-      "id": "ai",
-      "name": "AI画师",
-      "description": "依据绘图需求规格书，使用代码绘图工具（Python matplotlib/Pillow/SVG）编写绘图脚本、运行并导出 PNG 图片",
+      "kind": "canvas",
+      "id": "canvas-1006",
+      "name": "图片绘制团队",
+      "description": "程序化绘图集群：需求策划 → 代码绘图（matplotlib/PIL/SVG，非AI生图）→ 图片验收交付",
       "version": "1.0.0",
       "author": "AgentCluster",
-      "icon": "🤖",
-      "tags": [],
-      "dir": "agents/ai",
-      "file": "agent.json",
-      "updated_at": "2026-11-06T09:04:21",
-      "origin_agent_id": 43
+      "icon": "🗺",
+      "tags": [
+        "3 节点"
+      ],
+      "dir": "canvases/canvas-1006",
+      "file": "canvas.json",
+      "updated_at": "2026-11-06T09:10:25",
+      "origin_canvas_id": 1006,
+      "agent_count": 3,
+      "agent_group_count": 1
+    },
+    {
+      "kind": "canvas",
+      "id": "ppt",
+      "name": "PPT制作团队",
+      "description": "专业PPT制作集群，从需求分析到视觉设计的完整工作流",
+      "version": "1.0.0",
+      "author": "AgentCluster",
+      "icon": "🗺",
+      "tags": [
+        "5 节点"
+      ],
+      "dir": "canvases/ppt",
+      "file": "canvas.json",
+      "updated_at": "2026-11-06T08:38:56",
+      "origin_canvas_id": 1000,
+      "agent_count": 5
     },
     {
       "kind": "canvas",
@@ -32,23 +53,6 @@
       "updated_at": "2026-11-05T22:57:13",
       "origin_canvas_id": 1002,
       "agent_count": 7
-    },
-    {
-      "kind": "canvas",
-      "id": "canvas-1006",
-      "name": "图片绘制团队",
-      "description": "程序化绘图集群：需求策划 → 代码绘图（matplotlib/PIL/SVG，非AI生图）→ 图片验收交付",
-      "version": "1.0.0",
-      "author": "AgentCluster",
-      "icon": "🗺",
-      "tags": [
-        "3 节点"
-      ],
-      "dir": "canvases/canvas-1006",
-      "file": "canvas.json",
-      "updated_at": "2026-11-05T22:14:12",
-      "origin_canvas_id": 1006,
-      "agent_count": 3
     },
     {
       "kind": "agent",

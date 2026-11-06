@@ -70,7 +70,8 @@
       "max_tool_rounds": null,
       "reasoning_level": "off",
       "perception_scope": "link",
-      "workflow_mode": "none"
+      "workflow_mode": "none",
+      "group_name": "图片绘制"
     },
     {
       "name": "AI画师",
@@ -105,7 +106,8 @@
       "max_tool_rounds": null,
       "reasoning_level": "off",
       "perception_scope": "link",
-      "workflow_mode": "none"
+      "workflow_mode": "none",
+      "group_name": "图片绘制"
     },
     {
       "name": "图片验收交付官",
@@ -138,7 +140,14 @@
       "max_tool_rounds": null,
       "reasoning_level": "off",
       "perception_scope": "link",
-      "workflow_mode": "goal"
+      "workflow_mode": "goal",
+      "group_name": "图片绘制"
+    }
+  ],
+  "agent_groups": [
+    {
+      "name": "图片绘制",
+      "description": ""
     }
   ]
 }
