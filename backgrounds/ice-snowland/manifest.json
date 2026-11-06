@@ -1,0 +1,10 @@
+{
+  "id": "ice-snowland",
+  "name": "冰天雪地·晴日",
+  "type": "animation",
+  "entry": "background.html",
+  "description": "晴日雪原：蓝天暖阳、远处松林雪山、小木屋与雪人点缀雪原，一位红衣行人在雪地里缓步前行，呼出白气；三层飘雪、寒风飞鸟；鼠标划过卷起雪尘涟漪，点击迸发雪粉飞溅",
+  "preview": "linear-gradient(180deg, #5fa8e0 0%, #9fd0ef 45%, #d9eef7 78%, #f2f7fa 100%)",
+  "opacity": 1.0,
+  "interactive": true
+}
