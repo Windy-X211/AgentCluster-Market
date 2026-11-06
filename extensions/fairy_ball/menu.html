@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="utf-8">
+    <title>精灵菜单</title>
+    <style>
+        /* 独立菜单窗页面：窗口即菜单（useContentSize，页面按内容上报尺寸）。
+           透明窗规律：实色背景、禁 backdrop-filter / 大模糊投影。 */
+        html,
+        body {
+            margin: 0;
+            padding: 5px;
+            background: transparent;
+            overflow: hidden;
+            user-select: none;
+            font-family: 'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif;
+        }
+
+        .menu {
+            width: max-content;
+            min-width: 176px;
+            padding: 5px;
+            border-radius: 12px;
+            background: #0f1626;
+            border: 1px solid rgba(120, 150, 220, .25);
+            animation: menuIn .16s ease-out;
+        }
+
+        /* 三视图：主菜单 / 精灵样式 / 悬浮球大小（独立窗空间充足，平铺展示） */
+        .mview {
+            display: none;
+        }
+
+        .mview.active {
+            display: block;
+        }
+
+        .mi {
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            padding: 7px 10px;
+            border-radius: 8px;
+            color: #d7e2f7;
+            font-size: 13px;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+
+        .mi:hover {
+            background: rgba(91, 140, 255, .18);
+            color: #fff;
+        }
+
+        .mi .ic {
+            width: 18px;
+            text-align: center;
+            font-size: 14px;
+            flex: none;
+        }
+
+        /* 主菜单导航行的当前值与箭头 */
+        .mi .sub {
+            margin-left: auto;
+            color: #8fa5d8;
+            font-size: 11px;
+            flex: none;
+        }
+
+        .mi .arr {
+            color: #7d8cad;
+            font-size: 11px;
+            flex: none;
+        }
+
+        /* 子视图选中项的 ✓ */
+        .mi .check {
+            margin-left: auto;
+            color: #6ef0a8;
+            font-size: 12px;
+            flex: none;
+        }
+
+        .mi.sel {
+            background: rgba(91, 140, 255, .16);
+        }
+
+        /* 大小档位预览圆点 */
+        .szdot {
+            display: inline-block;
+            width: var(--d);
+            height: var(--d);
+            border-radius: 50%;
+            background: linear-gradient(160deg, #8fb3ff, #a78bfa);
+        }
+
+        .sep {
+            height: 1px;
+            margin: 4px 8px;
+            background: rgba(120, 150, 220, .22);
+        }
+
+        @keyframes menuIn {
+            from {
+                opacity: 0;
+                transform: translateY(-4px) scale(.98);
+            }
+
+            to {
+                opacity: 1;
+                transform: none;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="menu" id="menu">
+        <div class="mview active" data-v="main" id="mvMain">
+            <div class="mi" data-act="screenshot"><span class="ic">✂️</span>截图提问</div>
+            <div class="mi" data-act="quickchat"><span class="ic">💬</span>临时对话</div>
+            <div class="mi" data-act="settings"><span class="ic">⚙️</span>打开设置</div>
+            <div class="sep"></div>
+            <div class="mi" data-nav="skin"><span class="ic">🧚</span>精灵样式<span class="sub" id="skinName">星尘</span><span
+                    class="arr">▸</span></div>
+            <div class="mi" data-nav="size"><span class="ic">🎯</span>悬浮球大小<span class="sub" id="sizeName">中</span><span
+                    class="arr">▸</span></div>
+        </div>
+        <div class="mview" data-v="skin" id="mvSkin">
+            <div class="mi" data-nav="main"><span class="ic">◂</span>返回</div>
+            <div id="skinList"></div>
+        </div>
+        <div class="mview" data-v="size" id="mvSize">
+            <div class="mi" data-nav="main"><span class="ic">◂</span>返回</div>
+            <div class="mi" data-size="s"><span class="ic"><span class="szdot" style="--d:7px"></span></span>小<span
+                    class="check">✓</span></div>
+            <div class="mi" data-size="m"><span class="ic"><span class="szdot" style="--d:11px"></span></span>中<span
+                    class="check">✓</span></div>
+            <div class="mi" data-size="l"><span class="ic"><span class="szdot" style="--d:15px"></span></span>大<span
+                    class="check">✓</span></div>
+        </div>
+    </div>
+    <script>
+        (function () {
+            const menu = document.getElementById('menu')
+            const skinList = document.getElementById('skinList')
+            const skinName = document.getElementById('skinName')
+            const sizeName = document.getElementById('sizeName')
+            const fairyAPI = (window.electronAPI || {}).fairy || {}
+
+            // —— 皮肤与大小数据（与球窗同源 localStorage 共享：写这里，球窗 storage 事件感知）——
+            const SKINS = [
+                { id: 'stardust', name: '星尘', icon: '🧚' },
+                { id: 'flame', name: '焰焰', icon: '🔥' },
+                { id: 'bubble', name: '泡泡', icon: '💧' },
+                { id: 'moss', name: '苔苔', icon: '🍃' },
+                { id: 'ink', name: '墨墨', icon: '🌙' },
+            ]
+            const SIZES = [
+                { id: 's', name: '小' },
+                { id: 'm', name: '中' },
+                { id: 'l', name: '大' },
+            ]
+            let curSkin = SKINS[0]
+            let curSize = SIZES[1]
+            try {
+                const s = SKINS.find(k => k.id === localStorage.getItem('fairy.skin'))
+                if (s) curSkin = s
+                const z = SIZES.find(k => k.id === localStorage.getItem('fairy.size'))
+                if (z) curSize = z
+            } catch (e) { }
+
+            // 皮肤选项列表（数据驱动生成）
+            SKINS.forEach(k => {
+                const el = document.createElement('div')
+                el.className = 'mi'
+                el.dataset.skinpick = k.id
+                el.innerHTML = '<span class="ic">' + k.icon + '</span>' + k.name + '<span class="check">✓</span>'
+                skinList.appendChild(el)
+            })
+
+            function refreshChecks() {
+                skinList.querySelectorAll('[data-skinpick]').forEach(el => {
+                    const on = el.dataset.skinpick === curSkin.id
+                    el.classList.toggle('sel', on)
+                    el.querySelector('.check').style.visibility = on ? 'visible' : 'hidden'
+                })
+                menu.querySelectorAll('[data-size]').forEach(el => {
+                    const on = el.dataset.size === curSize.id
+                    el.classList.toggle('sel', on)
+                    el.querySelector('.check').style.visibility = on ? 'visible' : 'hidden'
+                })
+                skinName.textContent = curSkin.name
+                sizeName.textContent = curSize.name
+            }
+            refreshChecks()
+
+            // —— 尺寸上报：视图高度不同，主进程按实际内容 setContentSize + 重定位 ——
+            function reportSize() {
+                const w = menu.offsetWidth, h = menu.offsetHeight
+                fairyAPI.menuSize && fairyAPI.menuSize(Math.ceil(w) + 10, Math.ceil(h) + 10)   // +2×5px body padding
+            }
+
+            // —— 三视图切换 ——
+            function showView(v) {
+                menu.querySelectorAll('.mview').forEach(el => el.classList.toggle('active', el.dataset.v === v))
+                reportSize()   // 视图高度变化 → 窗口尺寸跟随
+            }
+
+            // —— 菜单点击 ——
+            menu.addEventListener('click', (e) => {
+                const mi = e.target.closest('.mi')
+                if (!mi) return
+                if (mi.dataset.nav) { showView(mi.dataset.nav); return }
+                if (mi.dataset.skinpick) {
+                    const s = SKINS.find(k => k.id === mi.dataset.skinpick)
+                    if (s) {
+                        curSkin = s
+                        try { localStorage.setItem('fairy.skin', s.id) } catch (err) { }
+                    }
+                    refreshChecks()
+                    fairyAPI.closeMenu && fairyAPI.closeMenu()   // 选完即关，球窗 storage 事件即时换装
+                    return
+                }
+                if (mi.dataset.size) {
+                    const z = SIZES.find(k => k.id === mi.dataset.size)
+                    if (z) {
+                        curSize = z
+                        try { localStorage.setItem('fairy.size', z.id) } catch (err) { }
+                    }
+                    refreshChecks()
+                    fairyAPI.closeMenu && fairyAPI.closeMenu()
+                    return
+                }
+                const act = mi.getAttribute('data-act')
+                fairyAPI.action && fairyAPI.action(act)   // 主进程分发动作并关闭菜单
+            })
+
+            // ESC 关闭（菜单窗可聚焦才能收到键盘）
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape') fairyAPI.closeMenu && fairyAPI.closeMenu()
+            })
+
+            // 加载完成即上报初始尺寸（主进程据此定窗、定位并 show）
+            window.addEventListener('load', () => {
+                requestAnimationFrame(reportSize)
+            })
+        })()
+    </script>
+</body>
+
+</html>

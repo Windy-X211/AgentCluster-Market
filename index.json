@@ -1,7 +1,38 @@
 {
   "version": "1.0",
-  "updated_at": "2026-11-06T13:55:56",
+  "updated_at": "2026-11-06T13:59:58",
   "items": [
+    {
+      "kind": "extension",
+      "id": "fairy_ball",
+      "dir": "extensions/fairy_ball",
+      "updated_at": "2026-11-06T13:59:58",
+      "version": "1.3.6",
+      "author": "AgentCluster",
+      "name": "精灵悬浮球",
+      "description": "桌面精灵悬浮球：随智能体运行状态活动（空闲呼吸眨眼/运行中欢快跳动发光/后端异常变灰委屈）；左键点击打开主窗口，右键弹出独立菜单窗（屏幕边缘自动翻转防出界、失焦自动收起）：区域截图提问、临时对话小窗、打开设置，并可切换 5 款形态完全不同的精灵（星尘圆球/焰焰火苗/泡泡水母/苔苔仙人掌/墨墨猫）与三档悬浮球大小，选择本地记忆",
+      "icon": "🧚",
+      "tags": [
+        "companion",
+        "float",
+        "screenshot",
+        "quickchat",
+        "skin",
+        "size"
+      ],
+      "ext_type": "hybrid",
+      "source": "builtin",
+      "frontend_files": [],
+      "backend_entry": "backend",
+      "pages": [
+        "fairy.html",
+        "menu.html",
+        "snip.html"
+      ],
+      "config_page": null,
+      "system_prompt_file": null,
+      "viz_types": []
+    },
     {
       "kind": "extension",
       "id": "visual_interaction",
