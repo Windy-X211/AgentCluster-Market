@@ -1,0 +1,19 @@
+version: "0.0.2"
+type: "plugin"
+name: "everything_search"
+label:
+  zh_Hans: "Everything 快速搜索"
+  en_US: "Everything Search"
+author: "AgentCluster"
+description:
+  zh_Hans: "通过 Everything 官方命令行工具 es.exe（IPC 通信，非 HTTP）搜索文件、打开应用、查询文件路径。要求本机已安装 Everything。"
+  en_US: "Search files, open apps, and resolve paths via Everything's official CLI tool es.exe (IPC, not HTTP). Requires Everything installed."
+version_code: 2
+icon: "🔍"
+tags: ["search", "filesystem", "everything", "windows"]
+
+dependencies:
+  external:
+    - name: "Everything 文件搜索工具"
+      url: "https://www.voidtools.com/"
+      description: "必装。包含 Everything.exe + es.exe 命令行工具，插件通过 subprocess 调用 es.exe 实现毫秒级搜索"

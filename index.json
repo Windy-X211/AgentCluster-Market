@@ -1,7 +1,130 @@
 {
   "version": "1.0",
-  "updated_at": "2026-11-06T20:09:29",
+  "updated_at": "2026-11-06T20:25:49",
   "items": [
+    {
+      "kind": "plugin",
+      "id": "browser_control",
+      "dir": "plugins/browser_control",
+      "updated_at": "2026-11-06T20:25:49",
+      "version": "0.1.0",
+      "author": "Windy-X211",
+      "name": "浏览器控制",
+      "description": "统一浏览器控制插件，支持四种后端 + 自动模式：\n• system — 启动系统 Edge/Chrome（cookie 持久化）\n• cdp — 桥接已运行浏览器（共享登录态/cookies/扩展；需 --remote-debugging-port=9222）\n• chromium — Playwright 内置 Chromium（干净沙箱）\n• auto — 自动选择（优先级 cdp > system > chromium），默认\n\n操作模板录制（用户录、智能体用）：\nrecord_start 启动录制面板 → 用户在浏览器正常操作（点击/输入/跳转自动捕获）→ 面板实时显示步骤，可删除/调序/加注释 → 完成保存到 templates/。\n之后两种用法：record_template_run（固定场景一键回放）、record_template_load（学习步骤后灵活执行，适应页面变化）。\n\n基础 action：navigate / new_tab / click / coordinate_click / type / screenshot / get_text / get_html / evaluate / wait / close / info / focus_tab\n录制 action：record_start / record_status / record_step_annotate / record_step_delete / record_step_reorder / record_complete / record_cancel\n模板 action：record_template_list / record_template_load / record_template_run / record_template_delete\n\n适用场景：网页自动化、数据抓取、表单填写、截图、自动化测试、批量登录、流程模板复用。\n",
+      "icon": "🌐",
+      "tags": [
+        "browser",
+        "automation",
+        "playwright",
+        "web",
+        "cdp",
+        "unified"
+      ]
+    },
+    {
+      "kind": "plugin",
+      "id": "desktop_control",
+      "dir": "plugins/desktop_control",
+      "updated_at": "2026-11-06T20:25:49",
+      "version": "0.1.0",
+      "author": "Windy-X211",
+      "name": "桌面控制",
+      "description": "桌面控制插件，支持屏幕截图、鼠标交互、键盘输入、屏幕录制、音频采集。\n\n★ 核心能力 ★\n1. 区域截图（双模式）：\n   - inspect 模式：返回 base64 数据，不保存到本地\n   - save 模式：保存到指定路径\n2. 鼠标交互：单击、双击、右键、滚动、拖动\n3. 键盘输入：单键、组合键、文字输入（含中文适配）\n4. 屏幕录制：区域/全屏、暂停/恢复/停止/丢弃、音频采集\n5. 等待操作：阻塞指定时长\n\n★ 中文输入适配 ★\n含中文等 Unicode 字符时强制走「剪贴板粘贴」方案（保存剪贴板 → 写入 → Ctrl+V → 恢复剪贴板），不依赖输入法状态。\n\n★ 录制浮层 ★\n录制期间固定右下角显示红点 + \"REC\" + 状态 + 时长浮层，浮层不进入最终视频画面。\n\n适用场景：UI 自动化测试、屏幕操作录制、视觉分析、远程协助。\n",
+      "icon": "🖥️",
+      "tags": [
+        "desktop",
+        "automation",
+        "screenshot",
+        "mouse",
+        "keyboard",
+        "recording"
+      ]
+    },
+    {
+      "kind": "plugin",
+      "id": "desktop_pet",
+      "dir": "plugins/desktop_pet",
+      "updated_at": "2026-11-06T20:25:49",
+      "version": "0.4.0",
+      "author": "Windy-X211",
+      "name": "桌宠控制",
+      "description": "控制 Live2D 桌宠：显示隐藏、位置大小、捏脸参数平滑过渡、流式参数动画（低延迟）",
+      "icon": "🐱",
+      "tags": [
+        "desktop",
+        "live2d",
+        "pet",
+        "animation",
+        "stream"
+      ]
+    },
+    {
+      "kind": "plugin",
+      "id": "everything_search",
+      "dir": "plugins/everything_search",
+      "updated_at": "2026-11-06T20:25:49",
+      "version": "0.0.2",
+      "author": "Windy-X211",
+      "name": "Everything 快速搜索",
+      "description": "通过 Everything 官方命令行工具 es.exe（IPC 通信，非 HTTP）搜索文件、打开应用、查询文件路径。要求本机已安装 Everything。",
+      "icon": "🔍",
+      "tags": [
+        "search",
+        "filesystem",
+        "everything",
+        "windows"
+      ]
+    },
+    {
+      "kind": "plugin",
+      "id": "github_connector",
+      "dir": "plugins/github_connector",
+      "updated_at": "2026-11-06T20:25:49",
+      "version": "0.1.0",
+      "author": "Windy-X211",
+      "name": "GitHub 连接",
+      "description": "GitHub 连接插件，为智能体提供仓库搜索、克隆拉取、远程项目信息读取、仓库元信息获取与本地项目提交能力。\n\n★ 核心能力 ★\n1. 认证管理：set_token 设置令牌、check_auth 验证认证状态（令牌脱敏存储）\n2. 仓库搜索：search_repos 按关键词/语言/排序检索 GitHub 仓库\n3. 仓库元信息：get_repo_info 获取 stars/forks/默认分支/最近提交等\n4. 远程读取项目信息：read_readme 读 README、list_files 列目录、read_file 读文件\n5. 克隆与拉取：clone_repo 克隆或已存在自动转 pull（支持浅克隆/HTTPS+SSH）\n6. 本地项目提交与建仓：push_project 提交推送、create_repo 创建新仓库（默认私有）\n7. 限流与错误处理：get_rate_limit 查询配额，统一错误码体系\n\n★ 安全设计 ★\n令牌脱敏存储、HTTPS 强制、含令牌 URL 不持久化、建仓默认私有、错误信息不含令牌原文。\n\n适用场景：智能体了解开源项目、拉取代码到本地、将工作区成果提交到 GitHub。\n",
+      "icon": "🐙",
+      "tags": [
+        "github",
+        "git",
+        "vcs",
+        "code"
+      ]
+    },
+    {
+      "kind": "plugin",
+      "id": "http_request",
+      "dir": "plugins/http_request",
+      "updated_at": "2026-11-06T20:25:49",
+      "version": "0.0.1",
+      "author": "Windy-X211",
+      "name": "HTTP 请求",
+      "description": "发起 GET/POST 请求访问外部 HTTP API，支持自定义 headers、body、超时。",
+      "icon": "🌐",
+      "tags": [
+        "network",
+        "http"
+      ]
+    },
+    {
+      "kind": "plugin",
+      "id": "send_email",
+      "dir": "plugins/send_email",
+      "updated_at": "2026-11-06T20:25:49",
+      "version": "0.3.0",
+      "author": "Windy-X211",
+      "name": "邮箱管理",
+      "description": "邮箱全功能管理插件。核心能力：1.发送(send)支持纯文本/HTML/附件/抄送/密送；2.读取(list/read/search/folders)IMAP收件支持分页搜索附件下载；3.清理(delete/clean)删除批量清空垃圾箱；4.整理(move/mark/organize)移动标记已读重要按规则分类归档；5.监听(listen_wait)同步阻塞等待新邮件，记录开始时已有邮件只返回监听期间新到的邮件，带超时和剩余时间。内置QQ/163/Gmail/Outlook/企业邮箱预设。",
+      "icon": "📧",
+      "tags": [
+        "email",
+        "smtp",
+        "imap",
+        "notification",
+        "mail"
+      ]
+    },
     {
       "kind": "canvas",
       "id": "canvas-1006",

@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "name": "刷抖音1105",
+  "description": "用户手动操作录制",
+  "start_url": "about:blank",
+  "mode": "system",
+  "created_at": "2026-11-05T17:01:06",
+  "completed_at": "2026-11-05T17:02:37",
+  "steps": [
+    {
+      "index": 0,
+      "action": "navigate",
+      "url_before": "",
+      "url_after": "https://www.douyin.com/jingxuan",
+      "url": "https://www.douyin.com/jingxuan",
+      "selector": "",
+      "stable_selector": "",
+      "text": "",
+      "coordinate": null,
+      "annotation": "",
+      "timestamp": "2026-11-05T17:01:26",
+      "wait_after": 0
+    },
+    {
+      "index": 1,
+      "action": "click",
+      "url_before": "",
+      "url_after": "https://www.douyin.com/jingxuan",
+      "url": "https://www.douyin.com/jingxuan",
+      "selector": "span.wiu7QUYe",
+      "stable_selector": "span.wiu7QUYe",
+      "text": "推荐",
+      "coordinate": null,
+      "annotation": "",
+      "timestamp": "2026-11-05T17:01:39",
+      "wait_after": 13710
+    },
+    {
+      "index": 2,
+      "action": "navigate",
+      "url_before": "",
+      "url_after": "https://www.douyin.com/?recommend=1",
+      "url": "https://www.douyin.com/?recommend=1",
+      "selector": "",
+      "stable_selector": "",
+      "text": "",
+      "coordinate": null,
+      "annotation": "",
+      "timestamp": "2026-11-05T17:01:40",
+      "wait_after": 713
+    },
+    {
+      "index": 3,
+      "action": "click",
+      "url_before": "",
+      "url_after": "https://www.douyin.com/?recommend=1",
+      "url": "https://www.douyin.com/?recommend=1",
+      "selector": "div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > svg:nth-of-type(1) > rect:nth-of-type(1)",
+      "stable_selector": "div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > svg:nth-of-type(1) > rect:nth-of-type(1)",
+      "text": "",
+      "coordinate": null,
+      "annotation": "",
+      "timestamp": "2026-11-05T17:02:00",
+      "wait_after": 20104
+    },
+    {
+      "index": 4,
+      "action": "click",
+      "url_before": "",
+      "url_after": "https://www.douyin.com/?recommend=1",
+      "url": "https://www.douyin.com/?recommend=1",
+      "selector": "div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > svg:nth-of-type(1) > g:nth-of-type(1) > g:nth-of-type(1) > g:nth-of-type(1) > path:nth-of-type(1)",
+      "stable_selector": "div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > svg:nth-of-type(1) > g:nth-of-type(1) > g:nth-of-type(1) > g:nth-of-type(1) > path:nth-of-type(1)",
+      "text": "",
+      "coordinate": null,
+      "annotation": "",
+      "timestamp": "2026-11-05T17:02:06",
+      "wait_after": 5925
+    }
+  ],
+  "final_url": "https://www.douyin.com/?recommend=1"
+}

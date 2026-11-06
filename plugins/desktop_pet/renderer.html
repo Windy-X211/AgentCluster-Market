@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <style>
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0);
+      overflow: hidden;
+    }
+
+    canvas {
+      display: block;
+    }
+  </style>
+  <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+  <script src="https://unpkg.com/pixi.js@6.5.10/dist/browser/pixi.min.js"></script>
+  <script src="https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/pixi-live2d-display@0.4.0/dist/cubism4.min.js"></script>
+</head>
+
+<body>
+  <script>
+    // ============ QWebChannel 桥 ============
+    window.bridge = null;
+    new QWebChannel(qt.webChannelTransport, function (channel) {
+      window.bridge = channel.objects.bridge;
+    });
+
+    // ============ 全局状态 ============
+    var model = null;
+    var app = null;
+    var fitScale = 1.0;       // 模型适配画布的基础缩放（画布尺寸变化时重算）
+    var modelBaseW = 0, modelBaseH = 0;   // 模型原始（未缩放）尺寸，避免重复缩放
+    var targetW = 0, targetH = 0;
+    var _suspendedFrames = false;   // true=画布分辨率调整中，暂停帧推送（避免空白帧闪动）
+
+    // 根据画布尺寸重新适配模型（始终铺满画布，居中）
+    function applyFit() {
+      if (!model || !modelBaseW || !modelBaseH) return;
+      var sx = targetW / modelBaseW;
+      var sy = targetH / modelBaseH;
+      fitScale = Math.min(sx, sy) * 0.95;
+      model.scale.set(fitScale);
+      model.x = targetW / 2;
+      model.y = targetH / 2;
+    }
+
+    // 生效画布分辨率：只改渲染缓冲（app.renderer.resize），
+    // 不改页面视口 → 不触发 window.resize → 无虚拟机异步中间态 → 无瞬时变大小
+    function syncCanvas(w, h) {
+      if (!app) return;
+      // 调整期间暂停帧推送：resize 会立即把画布清空为空白，
+      // 若此时推送则会闪动。先渲染好新分辨率首帧，再恢复推送。
+      _suspendedFrames = true;
+      try {
+        app.renderer.resize(w, h);
+        targetW = app.view.width;
+        targetH = app.view.height;
+        applyFit();
+        app.renderer.render(app.stage);   // 立即渲染好新分辨率首帧
+      } finally {
+        _suspendedFrames = false;
+      }
+      if (window.bridge) {                // 推一帧就绪的完整帧，实现无感替换
+        window.bridge.pushFrame(app.view.toDataURL('image/png'));
+      }
+    }
+
+    // ============ 缓动函数 ============
+    function easeInOutQuad(t) {
+      return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+    }
+
+    // ============ 参数写入辅助 ============
+    function applyParam(name, value) {
+      if (model && model.internalModel && model.internalModel.coreModel) {
+        model.internalModel.coreModel.setParameterValueById(name, value);
+      }
+    }
+
+    function getParamValue(name) {
+      if (model && model.internalModel && model.internalModel.coreModel) {
+        return model.internalModel.coreModel.getParameterValueById(name);
+      }
+      return 0;
+    }
+
+    // ============ 平滑过渡引擎（低优先级）============
+    var _tweenStates = {};  // {paramName: {from, to, start, duration}}
+
+    function smoothSetParams(params, ms) {
+      var now = performance.now();
+      for (var name in params) {
+        if (ms === 0) {
+          applyParam(name, params[name]);
+          delete _tweenStates[name];
+        } else {
+          var current = getParamValue(name);
+          _tweenStates[name] = { from: current, to: params[name], start: now, duration: ms };
+        }
+      }
+    }
+
+    function _tweenTick(now) {
+      for (var name in _tweenStates) {
+        // 流式动画运行时，跳过被流式控制的参数
+        if (_stream.playing && _stream.params.indexOf(name) >= 0) {
+          delete _tweenStates[name];
+          continue;
+        }
+        var t = _tweenStates[name];
+        var elapsed = now - t.start;
+        if (elapsed >= t.duration) {
+          applyParam(name, t.to);
+          delete _tweenStates[name];
+        } else {
+          var progress = elapsed / t.duration;
+          var eased = easeInOutQuad(progress);
+          applyParam(name, t.from + (t.to - t.from) * eased);
+        }
+      }
+    }
+
+    // ============ 鼠标跟随引擎（每帧指数平滑，独立于 tween）============
+    // Python 只发目标值，JS 每帧用 1-exp(-dt/tau) 逼近，不重启 → 丝滑且 FPS 无关
+    var _trackTargets = {};
+    var _trackActive = false;
+    var _trackLastTime = 0;
+
+    function setTrackTarget(params) {
+      _trackTargets = {};
+      for (var name in (params || {})) _trackTargets[name] = params[name];
+      _trackActive = Object.keys(_trackTargets).length > 0;
+      if (_trackActive) _trackLastTime = 0;  // 重置时间
+    }
+
+    function _trackTick(now) {
+      if (!_trackActive) return;
+      var dt = _trackLastTime ? Math.min(100, now - _trackLastTime) : 16;
+      _trackLastTime = now;
+      var tau = 50;  // ms 时间常数（越小越灵敏，40~80 为佳）
+      var alpha = 1 - Math.exp(-dt / tau);
+      var remaining = 0;
+      for (var name in _trackTargets) {
+        // 流式动画运行时跳过被流式控制的参数
+        if (_stream.playing && _stream.params.indexOf(name) >= 0) continue;
+        var cur = getParamValue(name);
+        var tgt = _trackTargets[name];
+        var next = cur + (tgt - cur) * alpha;
+        // 复位中且接近零 → 直接归零并清除
+        if (tgt === 0 && Math.abs(next) < 0.01) {
+          applyParam(name, 0);
+          delete _trackTargets[name];
+        } else {
+          applyParam(name, next);
+          remaining++;
+        }
+      }
+      if (remaining === 0) _trackActive = false;
+    }
+
+    // ============ Ring Buffer 流式参数动画（高优先级）============
+    var _stream = {
+      params: [],
+      values: null,         // Float64Array — 所有帧的值，按帧行优先展平
+      capacity: 0,
+      count: 0,
+      paramCount: 0,
+      intervalMs: 500,
+      playing: false,
+      repeat: 0,            // -1=无限循环, 0=播一遍, N=播N遍
+      startTime: 0,
+
+      getValue: function (frameIdx, paramIdx) {
+        return this.values[frameIdx * this.paramCount + paramIdx];
+      },
+
+      appendRows: function (rows) {
+        var newCount = this.count + rows.length;
+        if (newCount > this.capacity) this._grow(newCount);
+        for (var i = 0; i < rows.length; i++) {
+          var src = rows[i];
+          var base = (this.count + i) * this.paramCount;
+          for (var j = 0; j < this.paramCount; j++) {
+            this.values[base + j] = src[j];
+          }
+        }
+        this.count = newCount;
+      },
+
+      _grow: function (needed) {
+        var newCap = Math.max(needed * 2, 64);
+        var newBuf = new Float64Array(newCap * this.paramCount);
+        if (this.values) {
+          newBuf.set(this.values.subarray(0, this.count * this.paramCount));
+        }
+        this.values = newBuf;
+        this.capacity = newCap;
+      }
+    };
+
+    function _streamTick(now) {
+      if (!_stream.playing || _stream.count === 0) return;
+
+      var elapsed = now - _stream.startTime;
+      var totalFrames = _stream.count;
+      var exactIndex = elapsed / _stream.intervalMs;
+
+      // repeat 循环/停止判定
+      if (_stream.repeat === -1) {
+        exactIndex = exactIndex % totalFrames;
+      } else {
+        var totalPlayable = totalFrames * Math.max(1, _stream.repeat);
+        if (exactIndex >= totalPlayable) {
+          _stream.playing = false;
+          return;
+        }
+        exactIndex = exactIndex % totalFrames;
+      }
+
+      var idx0 = Math.floor(exactIndex);
+      var idx1 = (idx0 + 1) % totalFrames;
+      var t = exactIndex - idx0;
+      var eased = easeInOutQuad(t);
+
+      for (var j = 0; j < _stream.paramCount; j++) {
+        var v0 = _stream.getValue(idx0, j);
+        var v1 = _stream.getValue(idx1, j);
+        var value = v0 + (v1 - v0) * eased;
+        applyParam(_stream.params[j], value);
+      }
+    }
+
+    // ============ 流式命令处理 ============
+    function handleStartStream(cmd) {
+      var data = typeof cmd.streamData === 'string'
+        ? JSON.parse(cmd.streamData) : cmd.streamData;
+
+      var intervalStr = data.interval || "500ms";
+      var intervalMs = parseInt(intervalStr.replace(/ms/i, ''), 10);
+      if (isNaN(intervalMs)) intervalMs = 500;
+
+      var repeat = data.repeat !== undefined ? data.repeat : 0;
+
+      // 初始化 ring buffer
+      _stream.params = data.params;
+      _stream.paramCount = data.params.length;
+      _stream.intervalMs = intervalMs;
+      _stream.repeat = repeat;
+      _stream.count = 0;
+      _stream.capacity = 0;
+      _stream.values = new Float64Array(0);
+
+      if (data.values && data.values.length) {
+        _stream.appendRows(data.values);
+      }
+
+      _stream.startTime = performance.now();
+      _stream.playing = true;
+    }
+
+    function handleAppendFrames(cmd) {
+      if (!_stream.playing) return;
+
+      var rows = null;
+      if (cmd.valuesOnly) {
+        rows = JSON.parse(cmd.valuesOnly);
+      } else if (cmd.streamData) {
+        var data = typeof cmd.streamData === 'string'
+          ? JSON.parse(cmd.streamData) : cmd.streamData;
+        rows = data.values || [];
+        if (data.params && data.params.length !== _stream.paramCount) {
+          _stream.params = data.params;
+          _stream.paramCount = data.params.length;
+          _stream.count = 0;
+        }
+      }
+      if (rows && rows.length) _stream.appendRows(rows);
+    }
+
+    function handleStopStream() {
+      _stream.playing = false;
+      _stream.count = 0;
+      _stream.capacity = 0;
+      _stream.values = new Float64Array(0);
+    }
+
+    // ============ 命令接收 ============
+    window.setPetCommand = function (cmdOrStr) {
+      var cmd = typeof cmdOrStr === 'string' ? JSON.parse(cmdOrStr) : cmdOrStr;
+      if (!cmd || !cmd.type) return;
+
+      switch (cmd.type) {
+        // —— 窗口 & 模型 ——
+        case 'show':
+          // Python 端已调整窗口尺寸，resize 事件会自动重算 fitScale
+          break;
+
+        case 'hide':
+        case 'toggle':
+          // 由 Python 端 PetWidget 处理
+          break;
+
+        // —— 布局 ——
+        case 'setPosition':
+          // Python 端移动窗口，模型保持画布居中
+          if (model) {
+            model.x = targetW / 2;
+            model.y = targetH / 2;
+          }
+          break;
+
+        case 'setScale':
+          // Python 端已调整窗口尺寸，resize 事件会自动重算 fitScale
+          break;
+
+        // —— 捏脸参数 ——
+        case 'setParams':
+          if (cmd.params) {
+            var ms = cmd.smoothMs !== undefined ? cmd.smoothMs : 200;
+            smoothSetParams(cmd.params, ms);
+          }
+          break;
+
+        case 'getParams':
+          if (model && model.internalModel && model.internalModel.coreModel) {
+            var core = model.internalModel.coreModel;
+            var params = core._model.parameters;
+            var ids = params.ids;
+            var result = [];
+            for (var i = 0; i < ids.length; i++) {
+              result.push({
+                name: ids[i],
+                value: core.getParameterValueById(ids[i]),
+                min: params.minimumValues ? params.minimumValues[i] : null,
+                max: params.maximumValues ? params.maximumValues[i] : null,
+                default: params.defaultValues ? params.defaultValues[i] : null
+              });
+            }
+            return JSON.stringify({ params: result });
+          }
+          return JSON.stringify({ error: "model not loaded" });
+
+        case 'setExpression':
+          try {
+            if (model && model.internalModel && model.internalModel.motionManager) {
+              var em = model.internalModel.motionManager.expressionManager;
+              var defs = em ? (em.definitions || []) : [];
+              if (cmd.index >= 0 && cmd.index < defs.length) {
+                model.expression(defs[cmd.index].name);
+              }
+            }
+          } catch (e) { }
+          break;
+
+        // —— 流式参数动画 ——
+        case 'startStream':
+          handleStartStream(cmd);
+          break;
+
+        case 'appendFrames':
+          handleAppendFrames(cmd);
+          break;
+
+        case 'stopStream':
+          handleStopStream();
+          break;
+
+        case 'setTrackTarget':
+          setTrackTarget(cmd.params || {});
+          break;
+
+        case 'syncCanvas':
+          if (cmd.w && cmd.h) syncCanvas(cmd.w, cmd.h);
+          break;
+
+        case 'getModelRect':
+          // 返回模型在画布（= PetWidget 窗口 1:1）内的可见矩形
+          if (model && model.width && model.height) {
+            return JSON.stringify({
+              x: Math.round(model.x - model.width / 2),
+              y: Math.round(model.y - model.height / 2),
+              w: Math.round(model.width),
+              h: Math.round(model.height),
+              fallback: false
+            });
+          }
+          return JSON.stringify({ fallback: true, w: targetW, h: targetH });
+
+        // —— 模型切换（就地替换，不重载页面）——
+        case 'switchModel':
+          if (cmd.modelUrl && window.PIXI && PIXI.live2d) {
+            // 立即清空舞台：加载期间只显示加载泡泡，不残留旧模型
+            if (app && app.stage) {
+              try { app.stage.removeChildren(); } catch (e) { }
+            }
+            PIXI.live2d.Live2DModel.from(cmd.modelUrl)
+              .then(function (nm) {
+                // 停止流式动画（旧模型的参数对新模型无意义）
+                handleStopStream();
+                _tweenStates = {};
+                _trackTargets = {};
+                _trackActive = false;
+                _trackLastTime = 0;
+                // 移除旧模型
+                if (model) {
+                  try { model.destroy({ children: true }); } catch (e) { }
+                }
+                model = nm;
+                model.anchor.set(0.5, 0.5);
+                modelBaseW = model.width / (model.scale.x || 1);
+                modelBaseH = model.height / (model.scale.y || 1);
+                applyFit();
+                app.stage.addChild(model);
+                try { model.internalModel.motionManager.stopAllMotions(); } catch (e) { }
+                // 通知 Python 端：切换完成，隐藏加载泡泡
+                if (window.bridge) window.bridge.notifyModelReady();
+              })
+              .catch(function (err) {
+                console.error('switchModel failed:', err);
+                if (window.bridge) window.bridge.notifyModelReady();
+              });
+          }
+          break;
+      }
+    };
+
+    // ============ CDN 等待 + 初始化 ============
+    function waitForCDN() {
+      if (window.PIXI && window.PIXI.live2d) {
+        startLoad();
+      } else {
+        setTimeout(waitForCDN, 200);
+      }
+    }
+
+    function startLoad() {
+      try {
+        var modelUrl = new URLSearchParams(location.search).get('model');
+
+        app = new PIXI.Application({
+          backgroundAlpha: 0,
+          autoStart: true,
+          preserveDrawingBuffer: true,
+          width: window.innerWidth,
+          height: window.innerHeight
+        });
+        document.body.appendChild(app.view);
+        targetW = app.view.width;
+        targetH = app.view.height;
+
+        window.addEventListener('resize', function () {
+          app.renderer.resize(window.innerWidth, window.innerHeight);
+          targetW = app.view.width;
+          targetH = app.view.height;
+          // 画布尺寸变化后重新适配模型（用原始尺寸计算，不会叠加放大）
+          applyFit();
+        });
+
+        PIXI.live2d.Live2DModel.from(modelUrl)
+          .then(function (m) {
+            model = m;
+            model.anchor.set(0.5, 0.5);
+            // 记录原始尺寸（此时 scale 默认 1，除以 scale 以防万一）
+            modelBaseW = model.width / (model.scale.x || 1);
+            modelBaseH = model.height / (model.scale.y || 1);
+            applyFit();
+            app.stage.addChild(model);
+
+            // 停止内置待机动作，避免覆盖捏脸参数
+            try { model.internalModel.motionManager.stopAllMotions(); } catch (e) { }
+
+            // 双引擎 + 跟随引擎：先 tween（低优先级），后 track（鼠标跟随），最后 stream（高优先级，覆盖前两者）
+            app.ticker.add(function () {
+              var now = performance.now();
+              _tweenTick(now);
+              _trackTick(now);
+              _streamTick(now);
+            });
+
+            // 帧推送：与 PIXI 渲染帧同步
+            app.ticker.add(function () {
+              if (_suspendedFrames) return;  // 调整画布分辨率期间不推空白帧
+              if (window.bridge) {
+                window.bridge.pushFrame(app.view.toDataURL('image/png'));
+              }
+            });
+
+            // 通知 Python 端：模型加载完成，隐藏加载泡泡
+            if (window.bridge) window.bridge.notifyModelReady();
+          })
+          .catch(function (err) {
+            console.error('Live2D load failed:', err);
+            if (window.bridge) window.bridge.notifyModelReady();
+          });
+      } catch (e) {
+        console.error('PIXI init failed:', e);
+      }
+    }
+
+    waitForCDN();
+  </script>
+</body>
+
+</html>

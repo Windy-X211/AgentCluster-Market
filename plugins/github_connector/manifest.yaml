@@ -1,0 +1,54 @@
+# github_connector 插件 —— GitHub 连接
+
+version: "0.1.0"
+type: "plugin"
+name: "github_connector"
+label:
+  zh_Hans: "GitHub 连接"
+  en_US: "GitHub Connector"
+author: "AgentCluster"
+description:
+  zh_Hans: |
+    GitHub 连接插件，为智能体提供仓库搜索、克隆拉取、远程项目信息读取、仓库元信息获取与本地项目提交能力。
+
+    ★ 核心能力 ★
+    1. 认证管理：set_token 设置令牌、check_auth 验证认证状态（令牌脱敏存储）
+    2. 仓库搜索：search_repos 按关键词/语言/排序检索 GitHub 仓库
+    3. 仓库元信息：get_repo_info 获取 stars/forks/默认分支/最近提交等
+    4. 远程读取项目信息：read_readme 读 README、list_files 列目录、read_file 读文件
+    5. 克隆与拉取：clone_repo 克隆或已存在自动转 pull（支持浅克隆/HTTPS+SSH）
+    6. 本地项目提交与建仓：push_project 提交推送、create_repo 创建新仓库（默认私有）
+    7. 限流与错误处理：get_rate_limit 查询配额，统一错误码体系
+
+    ★ 安全设计 ★
+    令牌脱敏存储、HTTPS 强制、含令牌 URL 不持久化、建仓默认私有、错误信息不含令牌原文。
+
+    适用场景：智能体了解开源项目、拉取代码到本地、将工作区成果提交到 GitHub。
+  en_US: |
+    GitHub connector plugin providing repo search, clone/pull, remote project info reading, repo metadata, and local project push.
+
+    ★ Core Capabilities ★
+    1. Auth: set_token / check_auth (token masked in storage)
+    2. Search: search_repos by keyword/language/sort
+    3. Metadata: get_repo_info (stars/forks/default branch/latest commit)
+    4. Remote read: read_readme / list_files / read_file
+    5. Clone & pull: clone_repo (shallow clone, HTTPS+SSH, auto pull if exists)
+    6. Commit & create: push_project / create_repo (private by default)
+    7. Rate limit & errors: get_rate_limit, unified error codes
+
+    ★ Security ★
+    Token masked, HTTPS enforced, token-bearing URLs not persisted, repos private by default, no token in error messages.
+
+    Use cases: agent explores open-source projects, pulls code locally, pushes workspace results to GitHub.
+version_code: 1
+icon: "🐙"
+tags: ["github", "git", "vcs", "code"]
+
+dependencies:
+  pip:
+    - "httpx>=0.24.0"
+  external:
+    - name: "Git 命令行工具"
+      url: "https://git-scm.com/downloads"
+      description: "clone_repo / push_project action 需要 git 命令可用"
+

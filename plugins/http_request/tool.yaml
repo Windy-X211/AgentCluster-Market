@@ -1,0 +1,55 @@
+# http_request 插件的 tool 定义（Dify 兼容）
+# identity.name 是 LLM 调用时看到的工具名（必须和 manifest.yaml 的 name 或内部 key 对应）
+identity:
+  name: "http_request"
+  author: "AgentCluster"
+version: "0.0.1"
+
+description:
+  zh_Hans: "向外部 HTTP 接口发起 GET/POST/PUT/DELETE 请求，返回状态码、响应体和 headers。仅用于公开接口，用户若涉及私密 URL 或 Authorization 需提供。"
+  en_US: "Send HTTP requests (GET/POST/PUT/DELETE) to external APIs. Returns status, body and headers."
+
+parameters:
+  - name: "method"
+    type: string
+    required: true
+    description: "HTTP 方法：GET / POST / PUT / PATCH / DELETE"
+    enum: ["GET", "POST", "PUT", "PATCH", "DELETE"]
+
+  - name: "url"
+    type: string
+    required: true
+    description: "目标 URL（以 http:// 或 https:// 开头）"
+
+  - name: "headers"
+    type: object
+    required: false
+    description: "可选：请求头，如 {'Authorization': 'Bearer xxx', 'User-Agent': 'MyAgent'}"
+    properties:
+      "*":
+        type: string
+
+  - name: "body"
+    type: string
+    required: false
+    description: "可选：请求体（通常 POST/PUT 用）。若是 JSON 请自己序列化好字符串。"
+
+  - name: "timeout"
+    type: integer
+    required: false
+    default: 30
+    description: "超时秒数，默认 30 秒"
+
+outputs:
+  - name: "status"
+    type: integer
+    description: "HTTP 状态码"
+  - name: "body"
+    type: string
+    description: "响应体文本（最多 8000 字符）"
+  - name: "headers"
+    type: object
+    description: "响应头字典"
+  - name: "error"
+    type: string
+    description: "请求失败时的错误信息（成功时不存在）"
