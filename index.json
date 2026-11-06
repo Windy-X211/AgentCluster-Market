@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "updated_at": "2026-11-06T13:08:22",
+  "updated_at": "2026-11-06T13:09:19",
   "items": [
     {
       "kind": "canvas",
@@ -19,26 +19,6 @@
       "updated_at": "2026-11-06T13:08:22",
       "origin_canvas_id": 1006,
       "agent_count": 3,
-      "agent_group_count": 1,
-      "has_agents_dir": true
-    },
-    {
-      "kind": "canvas",
-      "id": "canvas-1005",
-      "name": "软件开发团队",
-      "description": "",
-      "version": "1.0.0",
-      "author": "Windy-X211",
-      "icon": "🗺",
-      "tags": [
-        "9 节点",
-        "9 智能体"
-      ],
-      "dir": "canvases/canvas-1005",
-      "file": "canvas.json",
-      "updated_at": "2026-11-06T12:56:08",
-      "origin_canvas_id": 1005,
-      "agent_count": 9,
       "agent_group_count": 1,
       "has_agents_dir": true
     },
