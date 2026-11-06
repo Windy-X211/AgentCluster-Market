@@ -1,7 +1,21 @@
 {
   "version": "1.0",
-  "updated_at": "2026-11-06T09:10:25",
+  "updated_at": "2026-11-06T09:31:52",
   "items": [
+    {
+      "kind": "agent",
+      "id": "agent-42",
+      "name": "绘图需求策划师",
+      "description": "把用户自然语言的绘图需求翻译为可直接执行的程序化绘图规格书（主体、构图、颜色、风格、尺寸），供画师编码实现",
+      "version": "1.0.0",
+      "author": "Windy-X211",
+      "icon": "🤖",
+      "tags": [],
+      "dir": "agents/agent-42",
+      "file": "agent.json",
+      "updated_at": "2026-11-06T09:31:52",
+      "origin_agent_id": 42
+    },
     {
       "kind": "canvas",
       "id": "canvas-1006",
