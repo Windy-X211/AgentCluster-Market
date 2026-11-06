@@ -1,7 +1,32 @@
 {
   "version": "1.0",
-  "updated_at": "2026-11-06T15:02:59",
+  "updated_at": "2026-11-06T15:05:34",
   "items": [
+    {
+      "kind": "extension",
+      "id": "mcp_server",
+      "dir": "extensions/mcp_server",
+      "updated_at": "2026-11-06T15:05:34",
+      "version": "1.0.0",
+      "author": "Windy-X211",
+      "name": "MCP 服务端",
+      "description": "把本程序的智能体、画布、会话与运行态能力封装为 MCP 工具，供 Claude Desktop、Cursor、Codex、DeepSeek Harness 等外部 MCP 客户端通过 Streamable HTTP 或 stdio 连接调用。",
+      "icon": "🛰️",
+      "tags": [
+        "mcp",
+        "server",
+        "integration",
+        "external"
+      ],
+      "ext_type": "backend-service",
+      "source": "builtin",
+      "frontend_files": [],
+      "backend_entry": "backend",
+      "pages": [],
+      "config_page": "config.html",
+      "system_prompt_file": null,
+      "viz_types": []
+    },
     {
       "kind": "canvas",
       "id": "canvas-1006",
