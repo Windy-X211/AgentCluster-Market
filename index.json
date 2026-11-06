@@ -1,7 +1,24 @@
 {
   "version": "1.0",
-  "updated_at": "2026-11-06T15:05:51",
+  "updated_at": "2026-11-06T18:11:30",
   "items": [
+    {
+      "kind": "background",
+      "id": "water-ripple",
+      "dir": "backgrounds/water-ripple",
+      "updated_at": "2026-11-06T18:11:30",
+      "version": "1.0.0",
+      "author": "Windy-X211",
+      "name": "水波倒影",
+      "description": "夜色湖面，岸边树影与月光倒映水中，鱼群游弋；鼠标划过或点击水面会泛起涟漪",
+      "icon": "🎨",
+      "tags": [
+        "animation"
+      ],
+      "preview": "linear-gradient(180deg, #050a12 0%, #0a1a24 36%, #0d2531 38%, #03080d 100%)",
+      "bg_type": "animation",
+      "entry": "background.html"
+    },
     {
       "kind": "extension",
       "id": "mcp_client",

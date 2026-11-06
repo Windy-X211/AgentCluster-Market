@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="zh">
+
+<head>
+    <meta charset="UTF-8">
+    <title>水波倒影</title>
+    <style>
+        html,
+        body {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            overflow: hidden;
+            background: transparent;
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+    </style>
+</head>
+
+<body>
+    <canvas id="c"></canvas>
+    <script>
+        (function () {
+            const cv = document.getElementById('c');
+            const ctx = cv.getContext('2d');
+            const TAU = Math.PI * 2;
+            const REDUCE = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+
+            let W = 0, H = 0, dpr = Math.min(window.devicePixelRatio || 1, 2);
+            let horizon = 0, waterH = 0;
+            let world = null;      // 岸上世界（天空 / 月亮 / 树影）
+            let refl = null;       // 上下翻转后的倒影图
+            let worldH = 0;
+            let moon = { x: 0, y: 0, r: 0 };
+            let t0 = performance.now();
+            let lastNow = 0;
+            let lastAmbient = 0;
+            let lastMoveAt = 0;
+            let lastPt = null;
+            let fish = [];
+            let ripples = [];
+            let seed = 20261024;
+
+            // 可复现的伪随机，避免每次 resize 后景物乱跳
+            function rand() {
+                seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+                return seed / 0x7fffffff;
+            }
+
+            function makeCanvas(w, h) {
+                const c = document.createElement('canvas');
+                c.width = Math.max(1, Math.round(w));
+                c.height = Math.max(1, Math.round(h));
+                return c;
+            }
+
+            // 松树剪影
+            function pine(c, x, baseY, h, color, lean) {
+                const w = h * (0.30 + rand() * 0.08);
+                c.save();
+                c.translate(x, baseY);
+                c.rotate(lean);
+                c.fillStyle = color;
+                // 树干
+                c.fillRect(-h * 0.018, -h * 0.32, h * 0.036, h * 0.32);
+                // 针叶层
+                const layers = 4;
+                for (let i = 0; i < layers; i++) {
+                    const f = i / (layers - 1);
+                    const ly = -h * (0.20 + f * 0.72);
+                    const lw = w * (1 - f * 0.62);
+                    const lh = h * 0.26 * (1 - f * 0.28);
+                    c.beginPath();
+                    c.moveTo(-lw / 2, ly);
+                    c.lineTo(0, ly - lh);
+                    c.lineTo(lw / 2, ly);
+                    c.lineTo(lw * 0.18, ly + lh * 0.12);
+                    c.lineTo(-lw * 0.18, ly + lh * 0.12);
+                    c.closePath();
+                    c.fill();
+                }
+                c.restore();
+            }
+
+            // 岸边芦苇
+            function reeds(c, x, baseY, h, color) {
+                c.save();
+                c.strokeStyle = color;
+                c.lineCap = 'round';
+                const n = 3 + Math.floor(rand() * 4);
+                for (let i = 0; i < n; i++) {
+                    const bx = x + (rand() - 0.5) * h * 0.9;
+                    const bh = h * (0.5 + rand() * 0.8);
+                    const bend = (rand() - 0.5) * h * 0.7;
+                    c.lineWidth = Math.max(1, h * 0.03);
+                    c.beginPath();
+                    c.moveTo(bx, baseY);
+                    c.quadraticCurveTo(bx + bend * 0.3, baseY - bh * 0.6, bx + bend, baseY - bh);
+                    c.stroke();
+                }
+                c.restore();
+            }
+
+            // 预渲染岸上世界
+            function buildWorld() {
+                worldH = Math.max(1, Math.round(horizon));
+                world = makeCanvas(W * dpr, worldH * dpr);
+                const w = world.getContext('2d');
+                w.setTransform(dpr, 0, 0, dpr, 0, 0);
+                w.clearRect(0, 0, W, worldH);
+
+                // 夜空
+                const sky = w.createLinearGradient(0, 0, 0, horizon);
+                sky.addColorStop(0, '#04070d');
+                sky.addColorStop(0.55, '#081521');
+                sky.addColorStop(1, '#12303c');
+                w.fillStyle = sky;
+                w.fillRect(0, 0, W, horizon);
+
+                // 星星
+                for (let i = 0; i < 110; i++) {
+                    const sx = rand() * W, sy = rand() * horizon * 0.62;
+                    w.globalAlpha = 0.15 + rand() * 0.45;
+                    w.fillStyle = '#cfe8f5';
+                    w.beginPath();
+                    w.arc(sx, sy, rand() * 0.9 + 0.2, 0, TAU);
+                    w.fill();
+                }
+                w.globalAlpha = 1;
+
+                // 月亮与光晕（画进世界，水中会随之出现随波晃动的月影）
+                moon.x = W * 0.68;
+                moon.y = horizon * 0.34;
+                moon.r = Math.max(14, Math.min(W, H) * 0.032);
+                const halo = w.createRadialGradient(moon.x, moon.y, moon.r * 0.6, moon.x, moon.y, moon.r * 7);
+                halo.addColorStop(0, 'rgba(214,236,238,0.16)');
+                halo.addColorStop(0.45, 'rgba(150,200,215,0.05)');
+                halo.addColorStop(1, 'rgba(120,180,200,0)');
+                w.fillStyle = halo;
+                w.beginPath();
+                w.arc(moon.x, moon.y, moon.r * 7, 0, TAU);
+                w.fill();
+                const mg = w.createRadialGradient(
+                    moon.x - moon.r * 0.3, moon.y - moon.r * 0.3, moon.r * 0.1,
+                    moon.x, moon.y, moon.r
+                );
+                mg.addColorStop(0, '#f2f7ee');
+                mg.addColorStop(1, '#c9d8d6');
+                w.fillStyle = mg;
+                w.beginPath();
+                w.arc(moon.x, moon.y, moon.r, 0, TAU);
+                w.fill();
+
+                // 远岸山影
+                w.fillStyle = '#040a0d';
+                w.beginPath();
+                w.moveTo(0, horizon);
+                w.lineTo(0, horizon - H * 0.048);
+                const steps = 26;
+                for (let i = 0; i <= steps; i++) {
+                    const x = i / steps * W;
+                    const hh = (Math.sin(x * 0.004) + Math.sin(x * 0.011 + 1.7)) * 0.5;
+                    w.lineTo(x, horizon - H * 0.030 - hh * H * 0.018);
+                }
+                w.lineTo(W, horizon);
+                w.closePath();
+                w.fill();
+
+                // 远岸松林
+                const farColor = '#050d10';
+                const nFar = Math.max(14, Math.round(W / 44));
+                for (let i = 0; i < nFar; i++) {
+                    const x = (i + rand() * 0.7) / nFar * W;
+                    const h = H * (0.055 + rand() * 0.05);
+                    pine(w, x, horizon - H * 0.012, h, farColor, (rand() - 0.5) * 0.06);
+                }
+
+                // 近岸树木（左右两岸）
+                const nearColor = '#03080b';
+                pine(w, W * 0.10, horizon + 2, H * 0.30, nearColor, 0.02);
+                pine(w, W * 0.19, horizon + 2, H * 0.235, nearColor, -0.03);
+                pine(w, W * 0.25, horizon + 2, H * 0.17, nearColor, 0.04);
+                pine(w, W * 0.87, horizon + 2, H * 0.27, nearColor, -0.02);
+                pine(w, W * 0.94, horizon + 2, H * 0.20, nearColor, 0.03);
+
+                // 岸边芦苇
+                reeds(w, W * 0.02, horizon + 2, H * 0.055, nearColor);
+                reeds(w, W * 0.31, horizon + 2, H * 0.045, nearColor);
+                reeds(w, W * 0.70, horizon + 2, H * 0.05, nearColor);
+                reeds(w, W * 0.80, horizon + 2, H * 0.04, nearColor);
+
+                // 水线微光
+                const edge = w.createLinearGradient(0, horizon - H * 0.008, 0, horizon);
+                edge.addColorStop(0, 'rgba(120,190,205,0)');
+                edge.addColorStop(1, 'rgba(120,190,205,0.10)');
+                w.fillStyle = edge;
+                w.fillRect(0, horizon - H * 0.008, W, H * 0.008);
+
+                // 世界上下翻转 → 倒影源图
+                refl = makeCanvas(W * dpr, worldH * dpr);
+                const r = refl.getContext('2d');
+                r.setTransform(dpr, 0, 0, dpr, 0, 0);
+                r.translate(0, worldH);
+                r.scale(1, -1);
+                r.drawImage(world, 0, 0, W, worldH);
+            }
+
+            function initFish() {
+                fish = [];
+                const n = REDUCE ? 3 : 6;
+                for (let i = 0; i < n; i++) {
+                    const deep = rand();
+                    const m = Math.min(W, H);
+                    fish.push({
+                        x: rand() * W,
+                        y: horizon + waterH * (0.18 + deep * 0.60),
+                        size: m * 0.014 + deep * m * 0.016,
+                        dir: rand() < 0.5 ? -1 : 1,
+                        speed: (0.045 + rand() * 0.09) * (REDUCE ? 0.6 : 1) * (0.7 + deep * 0.6),
+                        bobF: 0.0004 + rand() * 0.0007,
+                        bobA: 2 + deep * 6,
+                        phase: rand() * TAU,
+                        tint: rand(),
+                        depth: deep
+                    });
+                }
+            }
+
+            // 水面倒影：按水平切片绘制翻转后的世界，并用正弦波纹横向错位
+            function drawReflection(t) {
+                if (!refl) return;
+                const sliceCss = Math.max(4, Math.round(H / 90));
+                const maxH = Math.min(worldH, waterH);
+                ctx.save();
+                ctx.beginPath();
+                ctx.rect(0, horizon, W, waterH);
+                ctx.clip();
+                for (let y = 0; y < maxH; y += sliceCss) {
+                    const hCss = Math.min(sliceCss, maxH - y);
+                    const f = y / maxH;
+                    // 越往深处倒影越淡，避免在倒影尽头出现硬边
+                    ctx.globalAlpha = 0.58 * (1 - Math.pow(f, 1.5));
+                    const amp = 1.2 + f * 5.5;
+                    const off = Math.sin(y * 0.085 + t * 0.0011) * amp +
+                        Math.sin(y * 0.031 - t * 0.0007) * amp * 0.6;
+                    ctx.drawImage(
+                        refl,
+                        0, Math.round(y * dpr), refl.width, Math.round(hCss * dpr),
+                        off, horizon + y, W, hCss + 0.8
+                    );
+                }
+                ctx.restore();
+            }
+
+            // 月光在水面的碎影
+            function drawMoonPath(t) {
+                ctx.save();
+                ctx.globalCompositeOperation = 'lighter';
+                const colW = moon.r * 1.7;
+                for (let y = horizon + 2; y < H; y += 5) {
+                    const f = (y - horizon) / waterH;
+                    const wob = Math.sin(y * 0.09 + t * 0.0014) * (2 + f * 7);
+                    const w = colW * (0.5 + f * 1.5);
+                    const a = 0.15 * (1 - f) * (0.55 + 0.45 * Math.sin(y * 0.05 - t * 0.0022));
+                    if (a <= 0.008) continue;
+                    ctx.fillStyle = 'rgba(190,228,232,' + a.toFixed(3) + ')';
+                    ctx.beginPath();
+                    ctx.ellipse(moon.x + wob, y, w * 0.5, 1.6, 0, 0, TAU);
+                    ctx.fill();
+                }
+                ctx.restore();
+            }
+
+            // 水面细碎横向波光
+            function drawSurfaceLines(t) {
+                ctx.save();
+                ctx.strokeStyle = 'rgba(140,200,210,0.05)';
+                ctx.lineWidth = 1;
+                for (let i = 0; i < 12; i++) {
+                    const y = horizon + 6 + i * i * 1.7;
+                    if (y > H) break;
+                    const len = 40 + i * 34;
+                    const x = (Math.sin(t * 0.0004 + i) * 0.5 + 0.5) * (W + len) - len;
+                    ctx.beginPath();
+                    ctx.moveTo(x, y);
+                    ctx.lineTo(x + len, y);
+                    ctx.stroke();
+                }
+                ctx.restore();
+            }
+
+            function updateFish(dt) {
+                for (const f of fish) {
+                    f.x += f.dir * f.speed * dt;
+                    const pad = f.size * 4;
+                    if (f.dir > 0 && f.x > W + pad) {
+                        f.x = -pad;
+                        f.y = horizon + waterH * (0.2 + rand() * 0.6);
+                    } else if (f.dir < 0 && f.x < -pad) {
+                        f.x = W + pad;
+                        f.y = horizon + waterH * (0.2 + rand() * 0.6);
+                    }
+                }
+            }
+
+            function drawFish(t) {
+                for (const f of fish) {
+                    const y = f.y + Math.sin(t * f.bobF + f.phase) * f.bobA;
+                    const tilt = Math.cos(t * f.bobF + f.phase) * 0.08;
+                    const ang = f.dir > 0 ? tilt : Math.PI - tilt;
+                    const alpha = 0.10 + (1 - f.depth) * 0.16;
+                    const col = f.tint > 0.72 ? '236,150,86' : '150,215,206';
+                    const s = f.size;
+                    ctx.save();
+                    ctx.translate(f.x, y);
+                    ctx.rotate(ang);
+                    ctx.globalAlpha = alpha;
+                    ctx.fillStyle = 'rgb(' + col + ')';
+                    // 身体
+                    ctx.beginPath();
+                    ctx.ellipse(0, 0, s, s * 0.36, 0, 0, TAU);
+                    ctx.fill();
+                    // 尾鳍
+                    ctx.beginPath();
+                    ctx.moveTo(-s * 0.85, 0);
+                    ctx.quadraticCurveTo(-s * 1.5, -s * 0.55, -s * 1.65, -s * 0.15);
+                    ctx.quadraticCurveTo(-s * 1.42, 0, -s * 1.65, s * 0.15);
+                    ctx.quadraticCurveTo(-s * 1.5, s * 0.55, -s * 0.85, 0);
+                    ctx.fill();
+                    // 背鳍
+                    ctx.beginPath();
+                    ctx.moveTo(-s * 0.15, -s * 0.30);
+                    ctx.quadraticCurveTo(s * 0.15, -s * 0.62, s * 0.55, -s * 0.22);
+                    ctx.closePath();
+                    ctx.fill();
+                    // 背脊微光
+                    ctx.globalAlpha = alpha * 0.5;
+                    ctx.fillStyle = 'rgba(220,245,245,0.5)';
+                    ctx.beginPath();
+                    ctx.ellipse(s * 0.1, -s * 0.08, s * 0.5, s * 0.10, 0, 0, TAU);
+                    ctx.fill();
+                    ctx.restore();
+                }
+            }
+
+            function spawnRipple(x, y, opt) {
+                const o = opt || {};
+                if (y < horizon + 6) y = horizon + 6;
+                if (y > H - 2) y = H - 2;
+                ripples.push({
+                    x: x,
+                    y: y,
+                    r: o.r0 || 2,
+                    maxR: o.maxR || 90,
+                    speed: o.speed || 0.055,
+                    alpha: o.alpha != null ? o.alpha : 0.22,
+                    rings: o.rings || 2
+                });
+                if (ripples.length > 48) ripples.shift();
+            }
+
+            function updateRipples(dt) {
+                for (let i = ripples.length - 1; i >= 0; i--) {
+                    const rp = ripples[i];
+                    rp.r += rp.speed * dt;
+                    if (rp.r > rp.maxR) ripples.splice(i, 1);
+                }
+            }
+
+            function drawRipples() {
+                ctx.save();
+                ctx.beginPath();
+                ctx.rect(0, horizon, W, waterH);
+                ctx.clip();
+                ctx.globalCompositeOperation = 'lighter';
+                for (const rp of ripples) {
+                    const life = rp.r / rp.maxR;
+                    const fade = Math.max(0, 1 - life);
+                    const base = rp.alpha * fade * fade;
+                    if (base < 0.004) continue;
+                    for (let k = 0; k < rp.rings; k++) {
+                        const rr = rp.r - k * rp.maxR * 0.13;
+                        if (rr <= 0) continue;
+                        const a = base * (1 - k * 0.28);
+                        if (a <= 0.003) continue;
+                        ctx.strokeStyle = 'rgba(178,226,232,' + a.toFixed(3) + ')';
+                        ctx.lineWidth = Math.max(0.7, 1.2 - k * 0.2);
+                        ctx.beginPath();
+                        ctx.ellipse(rp.x, rp.y, rr, Math.max(0.8, rr * 0.34), 0, 0, TAU);
+                        ctx.stroke();
+                    }
+                    // 中心柔光（涟漪初起时）
+                    if (life < 0.35) {
+                        ctx.fillStyle = 'rgba(190,235,240,' + (base * 0.45).toFixed(3) + ')';
+                        ctx.beginPath();
+                        ctx.ellipse(rp.x, rp.y, rp.r * 0.65, rp.r * 0.22, 0, 0, TAU);
+                        ctx.fill();
+                    }
+                }
+                ctx.restore();
+            }
+
+            // 交互：父页面通过 postMessage 转发指针位置（iframe 本身不接收鼠标事件）
+            function onPoint(nx, ny, kind, now) {
+                const x = nx * W;
+                const y = ny * H;
+                if (kind === 'down') {
+                    const m = Math.min(W, H);
+                    spawnRipple(x, y, { maxR: m * 0.34, speed: 0.16, alpha: 0.34, rings: 3 });
+                    spawnRipple(x, y, { maxR: m * 0.20, speed: 0.10, alpha: 0.22, rings: 2, r0: 6 });
+                    lastPt = { x: x, y: y };
+                    lastMoveAt = now;
+                    return;
+                }
+                lastMoveAt = now;
+                if (y < horizon + 4) {
+                    lastPt = null;
+                    return;
+                }
+                if (!lastPt) {
+                    lastPt = { x: x, y: y };
+                    return;
+                }
+                const dx = x - lastPt.x, dy = y - lastPt.y;
+                const d = Math.sqrt(dx * dx + dy * dy);
+                if (d < 26) return;
+                const steps = d > 90 ? 2 : 1;
+                for (let i = 1; i <= steps; i++) {
+                    spawnRipple(
+                        lastPt.x + dx * i / steps,
+                        lastPt.y + dy * i / steps,
+                        {
+                            maxR: 52 + Math.min(60, d * 0.6),
+                            speed: 0.085,
+                            alpha: 0.19,
+                            rings: 2,
+                            r0: 1
+                        }
+                    );
+                }
+                lastPt = { x: x, y: y };
+            }
+
+            window.addEventListener('message', function (ev) {
+                const d = ev.data;
+                if (!d || d.type !== 'bg-pointer') return;
+                if (typeof d.x !== 'number' || typeof d.y !== 'number') return;
+                onPoint(d.x, d.y, d.kind, performance.now());
+            });
+
+            // 兜底：若 iframe 自身能收到指针事件
+            window.addEventListener('pointermove', function (e) {
+                onPoint(e.clientX / W, e.clientY / H, 'move', performance.now());
+            }, { passive: true });
+            window.addEventListener('pointerdown', function (e) {
+                onPoint(e.clientX / W, e.clientY / H, 'down', performance.now());
+            }, { passive: true });
+
+            function frame(now) {
+                const t = now - t0;
+                const dt = lastNow ? Math.min(48, now - lastNow) : 16;
+                lastNow = now;
+
+                if (now - lastMoveAt > 500) lastPt = null;
+
+                // 环境涟漪
+                if (now - lastAmbient > (REDUCE ? 5200 : 2600)) {
+                    lastAmbient = now;
+                    spawnRipple(
+                        rand() * W,
+                        horizon + waterH * (0.12 + rand() * 0.75),
+                        { maxR: 40 + rand() * 120, speed: 0.05 + rand() * 0.05, alpha: 0.10, rings: 1 }
+                    );
+                }
+
+                ctx.clearRect(0, 0, W, H);
+
+                // 岸上世界
+                ctx.drawImage(world, 0, 0, W, worldH);
+
+                // 水体底色
+                const wg = ctx.createLinearGradient(0, horizon, 0, H);
+                wg.addColorStop(0, '#0d2531');
+                wg.addColorStop(0.35, '#081a24');
+                wg.addColorStop(1, '#03080d');
+                ctx.fillStyle = wg;
+                ctx.fillRect(0, horizon, W, waterH);
+
+                // 倒影
+                drawReflection(t);
+
+                // 水体衰减色（离岸越远越暗）
+                const fade = ctx.createLinearGradient(0, horizon, 0, H);
+                fade.addColorStop(0, 'rgba(6,20,28,0.10)');
+                fade.addColorStop(0.35, 'rgba(5,16,22,0.28)');
+                fade.addColorStop(1, 'rgba(3,8,12,0.62)');
+                ctx.fillStyle = fade;
+                ctx.fillRect(0, horizon, W, waterH);
+
+                drawMoonPath(t);
+                drawSurfaceLines(t);
+
+                updateFish(dt);
+                drawFish(t);
+
+                updateRipples(dt);
+                drawRipples();
+
+                // 上下边缘压暗，保证界面文字可读
+                const vig = ctx.createLinearGradient(0, 0, 0, H);
+                vig.addColorStop(0, 'rgba(2,5,9,0.30)');
+                vig.addColorStop(0.4, 'rgba(2,5,9,0)');
+                vig.addColorStop(1, 'rgba(2,5,9,0.30)');
+                ctx.fillStyle = vig;
+                ctx.fillRect(0, 0, W, H);
+
+                requestAnimationFrame(frame);
+            }
+
+            function resize() {
+                W = Math.max(1, window.innerWidth);
+                H = Math.max(1, window.innerHeight);
+                dpr = Math.min(window.devicePixelRatio || 1, 2);
+                cv.width = Math.round(W * dpr);
+                cv.height = Math.round(H * dpr);
+                cv.style.width = W + 'px';
+                cv.style.height = H + 'px';
+                ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+                horizon = Math.round(H * 0.36);
+                waterH = H - horizon;
+                seed = 20261024;
+                buildWorld();
+                initFish();
+                ripples = [];
+                lastPt = null;
+                lastAmbient = 0;
+            }
+
+            let resizeTimer = null;
+            window.addEventListener('resize', function () {
+                clearTimeout(resizeTimer);
+                resizeTimer = setTimeout(resize, 160);
+            });
+
+            resize();
+            requestAnimationFrame(frame);
+        })();
+    </script>
+</body>
+
+</html>
