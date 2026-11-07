@@ -16,6 +16,9 @@
 
     canvas {
       display: block;
+      /* 高清 canvas:平滑缩放,不做 crisp-edges 像素化 */
+      image-rendering: auto;
+      image-rendering: -webkit-optimize-contrast;
     }
   </style>
   <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
@@ -59,6 +62,7 @@
       // 若此时推送则会闪动。先渲染好新分辨率首帧，再恢复推送。
       _suspendedFrames = true;
       try {
+        // resize 保持当前 resolution 不变（autoDensity 会自动处理 CSS 尺寸）
         app.renderer.resize(w, h);
         targetW = app.view.width;
         targetH = app.view.height;
@@ -444,10 +448,19 @@
       try {
         var modelUrl = new URLSearchParams(location.search).get('model');
 
+        // —— devicePixelRatio 适配 ——
+        // PIXI 的 autoDensity + resolution 组合:让 canvas 内部缓冲使用物理像素,
+        // CSS 尺寸保持逻辑像素,高 DPI 屏幕上渲染锐利不模糊。
+        // antialias:true 开启 WebGL 抗锯齿 —— 消除模型边缘锯齿线。
+        var dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
+
         app = new PIXI.Application({
           backgroundAlpha: 0,
           autoStart: true,
           preserveDrawingBuffer: true,
+          antialias: true,                    // 关键:开启抗锯齿,消除 Live2D 模型边缘锯齿
+          resolution: dpr,                     // 关键:渲染缓冲使用物理像素分辨率
+          autoDensity: true,                   // 自动按 resolution 缩放 CSS 尺寸
           width: window.innerWidth,
           height: window.innerHeight
         });
@@ -456,10 +469,11 @@
         targetH = app.view.height;
 
         window.addEventListener('resize', function () {
+          // resize 时保持 resolution 不变,只改逻辑尺寸
           app.renderer.resize(window.innerWidth, window.innerHeight);
           targetW = app.view.width;
           targetH = app.view.height;
-          // 画布尺寸变化后重新适配模型（用原始尺寸计算，不会叠加放大）
+          // 画布尺寸变化后重新适配模型(用原始尺寸计算,不会叠加放大)
           applyFit();
         });
 
