@@ -3,6 +3,18 @@
   "updated_at": "2026-11-07T11:11:44",
   "items": [
     {
+      "kind": "plugin",
+      "id": "cad_bridge",
+      "dir": "plugins/cad_bridge",
+      "updated_at": "2026-11-07T16:29:37",
+      "version": "1.1.0",
+      "author": "q737843-source",
+      "name": "CAD 制图",
+      "description": "通过 AutoLISP 常驻桥让智能体在已打开的 AutoCAD 里实时制图：\n你打开 CAD，智能体在上面一笔一笔画给你看，全程可见，你随时可以插手。\n\n★ 使用方式（全自动）★\n1. 直接对智能体说想画什么（如「画一个外径100、8个螺栓孔的法兰盘」）——\n   插件会自动检测 CAD：没打开就自动启动并新建图纸，自动加载桥，然后直接绘制；\n2. 也可以先说「连接 CAD」预热，或说「安装 CAD 启动自加载」——\n   之后每次打开 AutoCAD 桥自动就绪，连接零等待；\n3. 手动加载兜底：APPLOAD 加载插件目录下的 cad_bridge.lsp。\n\n★ 工作原理 ★\nAutoCAD 进程内常驻一个 AutoLISP 桥（零编译），通过文件队列接收智能体指令，\n全部用 entmake 绘制——不占命令行、不锁界面，你随时可以缩放、平移、编辑；\n智能体每写一批指令就主动唤醒桥立即消费（单笔约 0.1-0.5 秒实时出现在图纸上）。\n\n★ 核心能力 ★\n1. 绘图：直线 / 多段线 / 圆 / 弧 / 椭圆 / 矩形 / 正多边形 / 文字（中文自动\n   转义并以 MTEXT+宋体样式渲染，无需手动处理）/ 对齐标注\n2. 编辑与读取：按句柄删除、实体统计、图纸文字回读\n3. 文件：保存 / 另存为；视图缩放\n4. 控制：暂停 / 恢复 / 停止桥（用户始终拥有 CAD 控制权）\n5. 领域模板（一次成型，自动分层+标注）：\n   法兰盘 / 垫片 / 阶梯轴 / 六角螺栓（机械）、房间户型（建筑）、柱网轴网（土木）\n6. 自诊断：文字显示异常时可运行 selfTest 一键检查转义链路\n\n★ 图层与颜色约定 ★\n内置图层自动创建（英文命名）：OUTLINE=轮廓(白)、CENTER=中心线(红)、\nDIM=标注(绿)、TEXT=文字(青)、WALL=墙体(白)；颜色为 ACI 索引（1红 2黄 3绿 4青 5蓝 6品红 7黑白）。\n\n★ 环境要求 ★\nWindows + AutoCAD（任意近期版本均可，已实测 2026）；pywin32 依赖自动安装。\n",
+      "icon": "🔧",
+      "tags": []
+    },
+    {
       "kind": "extension",
       "id": "fairy_ball",
       "dir": "extensions/fairy_ball",
@@ -263,6 +275,24 @@
       "file": "agent.json",
       "updated_at": "2026-11-06T22:43:49",
       "origin_agent_id": 27
+    },
+    {
+      "kind": "plugin",
+      "id": "sd_webui",
+      "dir": "plugins/sd_webui",
+      "updated_at": "2026-11-06T21:02:37",
+      "version": "0.1.0",
+      "author": "q737843-source",
+      "name": "本地生图（SD WebUI）",
+      "description": "连接本地 Stable Diffusion WebUI（默认 http://127.0.0.1:7860）生成图片。\n\n★ 核心能力 ★\n1. 文生图（txt2img）：把 LLM 扩写好的完整提示词交给 SD 生成图片\n2. 图生图（img2img）：传入参考图 base64 或本地路径，按重绘幅度再创作\n3. 模型管理：列出/切换大模型、采样器、LoRA、Embedding、放大器\n4. 任务控制：查询生成进度、中断生成\n5. 反向提示词：negative_prompt 过滤不想要的元素，支持 CFG、采样步数、高清修复等完整参数\n\n★ 调用约定 ★\n调用前应先由语言模型把用户需求扩写成完整英文提示词（含画质词/风格/构图/光线），\n同时给出合适的 negative_prompt，再填入 prompt / negative_prompt 参数。\n",
+      "icon": "🎨",
+      "tags": [
+        "image",
+        "stablediffusion",
+        "txt2img",
+        "img2img",
+        "sd-webui"
+      ]
     },
     {
       "kind": "skill",

@@ -1,0 +1,332 @@
+# cad_bridge 插件的 tool 定义 —— AutoLISP 常驻桥实时操控 AutoCAD
+
+identity:
+  name: "cad_bridge"
+  author: "AgentCluster"
+version: "1.0.0"
+
+description:
+  zh_Hans: |
+    通过 AutoLISP 常驻桥实时操控已打开的 AutoCAD。绘制实时出现在用户图纸上，
+    用户全程可见且可随时自己操作 CAD（桥不锁界面、不占命令行）。
+
+    ═══════════════════════════════════════════════════════
+    ★★★ 使用约定（重要）★★★
+    ═══════════════════════════════════════════════════════
+    1. 前提：用户的 AutoCAD 已打开且有一张活动图纸。
+    2. 首次使用先 run(action="connect")：
+       - 检测到 AutoCAD 运行中 → 自动投递 LSP（COM SendCommand），几秒内桥就绪
+       - 未检测到 → 返回 error 并附手动 APPLOAD 指引，提示用户先打开 CAD
+    3. run(action="status") 可随时查看桥连接状态（connected/state/心跳年龄）。
+    4. 收到制图需求时，把图形拆解为基础指令逐条调用（角度为「度」，
+       坐标为图面单位）；角度 0°=右，90°=上，逆时针为正。
+    5. 分层约定（图层名统一用英文，避免桥文件编码歧义）：
+       OUTLINE=轮廓(白/7)、CENTER=中心线(红/1)、DIM=标注(绿/3)、
+       TEXT=文字(青/4)、WALL=墙体(白/7)。自定义图层名也请用英文。
+       指定图层不存在时 LSP 自动创建。color 为 ACI 索引：1红 2黄 3绿 4青 5蓝 6品红 7黑白，0=随层。
+       文字内容含中文时插件自动转为 \U+XXXX 转义并以 MTEXT 实体（宋体样式 ACBBRIDGE）
+       绘制，无需手动处理。文字显示异常时运行 run(action="selfTest") 一键自诊断，
+       返回 verdict 判定转义链路是否生效。
+    6. 典型零件优先用模板（action="template"）一次成型：
+       法兰盘 flange / 垫片 gasket / 阶梯轴 shaft / 六角螺栓 hexBolt /
+       房间户型 room / 柱网轴网 grid，模板参数用 params 传 JSON 对象。
+    7. 用户控制权：run(action="pause") 暂停桥消费队列、resume 恢复、stop 停桥；
+       用户在 CAD 里的手动操作永远优先，桥从不打扰。
+
+    ═══════════════════════════════════════════════════════
+    ★★★ 连接 status / connect ★★★
+    ═══════════════════════════════════════════════════════
+    run(action="status")   # connected / state / heartbeatAge / cadRunning / lspPath
+    run(action="connect")  # autoOpen 默认 True：CAD 未运行时自动启动并新建图纸
+    ★ 自动连接约定：绘图类 action 执行前会自动确保桥就绪
+    （CAD 没开会自动启动 + 自动加载桥），所以**直接调绘图 action 即可**，
+    无需先 connect；connect 仅用于显式预热。指令入队后经 ACBWAKE 命令
+    主动唤醒桥立即消费，单笔延迟约 0.1-0.5 秒，不再等轮询周期。
+    run(action="installAutoload")    # 把桥写进 AutoCAD 启动组（注册表），
+                                     # 之后打开 CAD 桥自动就绪，connect 秒连
+    run(action="uninstallAutoload")  # 移除启动组注册
+
+    ═══════════════════════════════════════════════════════
+    ★★★ 基础绘图指令 ★★★
+    ═══════════════════════════════════════════════════════
+    run(action="line", x1=0, y1=0, x2=100, y2=0, layer="", color=0)
+    run(action="polyline", points=[[0,0],[100,0],[100,50]], closed=True, layer="", color=0)
+    #   points 也可传字符串 "0,0;100,0;100,50"
+    run(action="circle", cx=50, cy=50, r=25, layer="", color=0)
+    run(action="arc", cx=50, cy=50, r=25, startAngle=0, endAngle=90, layer="", color=0)
+    run(action="ellipse", cx=0, cy=0, majorX=50, majorY=0, ratio=0.5, layer="", color=0)
+    #   majorX/majorY 为长轴向量（圆心到长轴端点），ratio=短轴/长轴 ∈ (0,1]
+    run(action="rectangle", x=0, y=0, width=100, height=50, layer="", color=0)
+    run(action="polygon", cx=0, cy=0, r=40, sides=6, layer="", color=0)
+    run(action="text", text="轴承座", x=0, y=0, height=3.5, rotation=0, layer="", color=0)
+    run(action="dimension", x1=0, y1=0, x2=100, y2=0, offset=8, layer="", color=0)
+
+    ═══════════════════════════════════════════════════════
+    ★★★ 编辑 / 读取 / 文件 / 控制 ★★★
+    ═══════════════════════════════════════════════════════
+    run(action="erase", handle="2A3")      # 按句柄删除
+    run(action="readDrawing")              # 实体统计 + 文字内容
+    run(action="zoom")                     # ZoomExtents（走 COM，不碰命令行）
+    run(action="save") / run(action="saveAs", filePath="D:/part.dwg")
+    run(action="pause") / run(action="resume") / run(action="stop")
+
+    ═══════════════════════════════════════════════════════
+    ★★★ 领域模板 template ★★★
+    ═══════════════════════════════════════════════════════
+    run(action="template", what="flange", baseX=0, baseY=0,
+        params={"outerD": 100, "innerD": 50, "boltCount": 6, "boltCircleD": 75, "boltD": 9})
+    run(action="template", what="gasket", baseX=0, baseY=0,
+        params={"width": 120, "height": 80, "cornerR": 10, "holeCount": 4, "holeD": 9, "edgeMargin": 10})
+    run(action="template", what="shaft", baseX=0, baseY=0,
+        params={"segments": [{"d": 30, "len": 50}, {"d": 45, "len": 30}]})
+    run(action="template", what="hexBolt", baseX=0, baseY=0,
+        params={"headAcross": 24, "boltD": 16, "boltLen": 50})
+    run(action="template", what="room", baseX=0, baseY=0,
+        params={"width": 6000, "height": 4000, "wallT": 240, "doorWidth": 900, "windowWidth": 1500})
+    run(action="template", what="grid", baseX=0, baseY=0,
+        params={"colSpacing": [6000, 6000], "rowSpacing": [4500]})
+
+    返回 {ok, drawn, handles, mode, connected, ...}；失败返回 {ok: false, error}。
+  en_US: |
+    Live-bridge into a running AutoCAD via resident AutoLISP. Actions:
+    status, connect, line, polyline, circle, arc, ellipse, rectangle, polygon,
+    text, dimension, erase, readDrawing, zoom, save, saveAs, pause, resume,
+    stop, template (flange/gasket/shaft/hexBolt/room/grid). Angles in degrees.
+
+parameters:
+  - name: "action"
+    type: string
+    required: true
+    description: "要执行的操作"
+    enum:
+      - "status"
+      - "connect"
+      - "installAutoload"
+      - "uninstallAutoload"
+      - "line"
+      - "polyline"
+      - "circle"
+      - "arc"
+      - "ellipse"
+      - "rectangle"
+      - "polygon"
+      - "text"
+      - "dimension"
+      - "erase"
+      - "readDrawing"
+      - "zoom"
+      - "save"
+      - "saveAs"
+      - "pause"
+      - "resume"
+      - "stop"
+      - "template"
+      - "selfTest"
+
+  - name: "autoOpen"
+    type: boolean
+    required: false
+    description: "connect 时 CAD 未运行是否自动启动 AutoCAD（默认 true）"
+    default: true
+
+  - name: "x1"
+    type: number
+    required: false
+    description: "第一个点的 X 坐标（line/dimension 起点）"
+
+  - name: "y1"
+    type: number
+    required: false
+    description: "第一个点的 Y 坐标（line/dimension 起点）"
+
+  - name: "x2"
+    type: number
+    required: false
+    description: "第二个点的 X 坐标（line/dimension 终点）"
+
+  - name: "y2"
+    type: number
+    required: false
+    description: "第二个点的 Y 坐标（line/dimension 终点）"
+
+  - name: "points"
+    type: array
+    required: false
+    description: "polyline 顶点列表 [[x,y],...]，也可传字符串 \"x1,y1;x2,y2;...\""
+
+  - name: "closed"
+    type: boolean
+    required: false
+    description: "polyline 是否闭合"
+    default: false
+
+  - name: "cx"
+    type: number
+    required: false
+    description: "圆/弧/椭圆/正多边形 圆心 X"
+
+  - name: "cy"
+    type: number
+    required: false
+    description: "圆/弧/椭圆/正多边形 圆心 Y"
+
+  - name: "x"
+    type: number
+    required: false
+    description: "rectangle 左下角 X / text 插入点 X"
+
+  - name: "y"
+    type: number
+    required: false
+    description: "rectangle 左下角 Y / text 插入点 Y"
+
+  - name: "width"
+    type: number
+    required: false
+    description: "rectangle 宽度"
+
+  - name: "height"
+    type: number
+    required: false
+    description: "rectangle 高度 / text 字高（按 action 语义区分）"
+
+  - name: "r"
+    type: number
+    required: false
+    description: "圆/弧/正多边形 半径"
+
+  - name: "startAngle"
+    type: number
+    required: false
+    description: "arc 起始角度（度，0°=右，逆时针为正）"
+    default: 0
+
+  - name: "endAngle"
+    type: number
+    required: false
+    description: "arc 终止角度（度）"
+    default: 90
+
+  - name: "majorX"
+    type: number
+    required: false
+    description: "ellipse 长轴向量 X 分量"
+    default: 50
+
+  - name: "majorY"
+    type: number
+    required: false
+    description: "ellipse 长轴向量 Y 分量"
+
+  - name: "ratio"
+    type: number
+    required: false
+    description: "ellipse 短轴/长轴比，(0,1]"
+    default: 0.5
+
+  - name: "sides"
+    type: number
+    required: false
+    description: "polygon 边数，≥3"
+    default: 6
+
+  - name: "text"
+    type: string
+    required: false
+    description: "text 要写入的文字内容"
+
+  - name: "rotation"
+    type: number
+    required: false
+    description: "text 旋转角度（度）"
+    default: 0
+
+  - name: "offset"
+    type: number
+    required: false
+    description: "dimension 尺寸线相对标注点的法向偏移"
+    default: 8
+
+  - name: "layer"
+    type: string
+    required: false
+    description: "绘图目标图层名（不存在时 LSP 自动创建）"
+
+  - name: "color"
+    type: number
+    required: false
+    description: "ACI 颜色索引：1红 2黄 3绿 4青 5蓝 6品红 7黑白，0=随层"
+    default: 0
+
+  - name: "handle"
+    type: string
+    required: false
+    description: "erase 指定要删除的实体句柄"
+
+  - name: "filePath"
+    type: string
+    required: false
+    description: "saveAs 目标文件路径"
+
+  - name: "what"
+    type: string
+    required: false
+    description: "template 模板名：flange / gasket / shaft / hexBolt / room / grid"
+
+  - name: "params"
+    type: object
+    required: false
+    description: "template 参数对象（如 flange: outerD/innerD/boltCount/boltCircleD/boltD）"
+
+  - name: "baseX"
+    type: number
+    required: false
+    description: "template 放置基准 X"
+    default: 0
+
+  - name: "baseY"
+    type: number
+    required: false
+    description: "template 放置基准 Y"
+    default: 0
+
+outputs:
+  - name: "ok"
+    type: boolean
+    description: "是否成功"
+
+  - name: "connected"
+    type: boolean
+    description: "桥是否就绪（心跳新鲜）"
+
+  - name: "state"
+    type: string
+    description: "桥状态：RUNNING / PAUSED / STOPPED / OFFLINE / ERROR:原因"
+
+  - name: "drawn"
+    type: number
+    description: "本批成功绘制的实体数"
+
+  - name: "handle"
+    type: string
+    description: "新建实体的句柄（erase 可引用）"
+
+  - name: "handles"
+    type: array
+    description: "本批全部实体句柄"
+
+  - name: "entityCounts"
+    type: object
+    description: "readDrawing 按类型统计"
+
+  - name: "texts"
+    type: array
+    description: "readDrawing 图纸文字内容"
+
+  - name: "file"
+    type: string
+    description: "save/saveAs 返回的实际文件路径"
+
+  - name: "error"
+    type: string
+    description: "失败时的错误信息"

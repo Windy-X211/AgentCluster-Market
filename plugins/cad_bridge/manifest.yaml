@@ -1,0 +1,55 @@
+# cad_bridge 插件 —— AutoLISP 常驻桥，实时操控已打开的 AutoCAD
+# 参考 new-acad 的「CAD 进程内常驻桥」思路，纯 AutoLISP 实现（零编译，
+# 不依赖 .NET 8 / Autodesk 托管程序集，任何版本的 AutoCAD 均可用）。
+
+version: "1.1.0"
+type: "plugin"
+name: "cad_bridge"
+label:
+  zh_Hans: "CAD 制图"
+  en_US: "CAD Drawing"
+author: "AgentCluster"
+description:
+  zh_Hans: |
+    通过 AutoLISP 常驻桥让智能体在已打开的 AutoCAD 里实时制图：
+    你打开 CAD，智能体在上面一笔一笔画给你看，全程可见，你随时可以插手。
+
+    ★ 使用方式（全自动）★
+    1. 直接对智能体说想画什么（如「画一个外径100、8个螺栓孔的法兰盘」）——
+       插件会自动检测 CAD：没打开就自动启动并新建图纸，自动加载桥，然后直接绘制；
+    2. 也可以先说「连接 CAD」预热，或说「安装 CAD 启动自加载」——
+       之后每次打开 AutoCAD 桥自动就绪，连接零等待；
+    3. 手动加载兜底：APPLOAD 加载插件目录下的 cad_bridge.lsp。
+
+    ★ 工作原理 ★
+    AutoCAD 进程内常驻一个 AutoLISP 桥（零编译），通过文件队列接收智能体指令，
+    全部用 entmake 绘制——不占命令行、不锁界面，你随时可以缩放、平移、编辑；
+    智能体每写一批指令就主动唤醒桥立即消费（单笔约 0.1-0.5 秒实时出现在图纸上）。
+
+    ★ 核心能力 ★
+    1. 绘图：直线 / 多段线 / 圆 / 弧 / 椭圆 / 矩形 / 正多边形 / 文字（中文自动
+       转义并以 MTEXT+宋体样式渲染，无需手动处理）/ 对齐标注
+    2. 编辑与读取：按句柄删除、实体统计、图纸文字回读
+    3. 文件：保存 / 另存为；视图缩放
+    4. 控制：暂停 / 恢复 / 停止桥（用户始终拥有 CAD 控制权）
+    5. 领域模板（一次成型，自动分层+标注）：
+       法兰盘 / 垫片 / 阶梯轴 / 六角螺栓（机械）、房间户型（建筑）、柱网轴网（土木）
+    6. 自诊断：文字显示异常时可运行 selfTest 一键检查转义链路
+
+    ★ 图层与颜色约定 ★
+    内置图层自动创建（英文命名）：OUTLINE=轮廓(白)、CENTER=中心线(红)、
+    DIM=标注(绿)、TEXT=文字(青)、WALL=墙体(白)；颜色为 ACI 索引（1红 2黄 3绿 4青 5蓝 6品红 7黑白）。
+
+    ★ 环境要求 ★
+    Windows + AutoCAD（任意近期版本均可，已实测 2026）；pywin32 依赖自动安装。
+  en_US: |
+    Live CAD drawing via a resident AutoLISP bridge: the agent draws in your
+    opened AutoCAD in real time while you stay in control.
+    Auto-detects/starts AutoCAD, auto-loads the bridge (registry startup group
+    optional), wakes it per instruction batch (<0.5s latency), draws via
+    entmake/MTEXT+vla (no command line usage, UI never blocked), Chinese text
+    via \U+XXXX escaping with a SimSun text style. Includes 6 parametric
+    templates (flange/gasket/shaft/hex bolt/room/grid) and a selfTest action.
+dependencies:
+  pip:
+    - "pywin32>=306; sys_platform == 'win32'"
