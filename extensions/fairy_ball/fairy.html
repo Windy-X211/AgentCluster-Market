@@ -1,0 +1,701 @@
+<!doctype html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="utf-8">
+    <title>精灵悬浮球</title>
+    <style>
+        /* DPI 缩放变量：JS 在加载时根据 devicePixelRatio 设置 --dpr */
+        :root { --dpr: 1; }
+
+        html,
+        body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background: transparent;
+            overflow: hidden;
+            user-select: none;
+            font-family: 'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            text-rendering: optimizeLegibility;
+        }
+
+        .stage {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            align-items: flex-end;
+            justify-content: center;
+            padding-bottom: 28px;   /* 扩大:窗口 260×260,底部留足够空间给阴影+scale(l)档位 */
+            overflow: visible;       /* 允许精灵动画超出 stage 边界(呼吸/跳动时不裁切) */
+        }
+
+        /* ============ 缩放层（大小档位，与精灵动画层分离互不干扰） ============ */
+        .wrap {
+            position: relative;
+            width: auto;
+            height: auto;
+            transform-origin: bottom center;
+            transition: transform .18s ease-out;
+            /* GPU 合成层：减少 transform 动画时的子像素抖动 */
+            transform-style: preserve-3d;
+            will-change: transform;
+            overflow: visible;       /* 关键:允许精灵超出 wrap 边界(scale(l)时)不被裁切 */
+        }
+
+        .wrap[data-size="s"] {
+            transform: scale(.72);
+        }
+
+        .wrap[data-size="m"] {
+            transform: scale(1);
+        }
+
+        .wrap[data-size="l"] {
+            transform: scale(1.28);
+        }
+
+        /* ============ 精灵容器（公共） ============ */
+        /* HOME 官方高清 PNG (475×475) 与 HOME 3D 动画 WebM (360px 高,宽度 200~432px)。
+           精灵按原始宽高比渲染,max-height 160px 控制整体大小(在 260×260 窗口里放得下
+           且呼吸/scale(l)档位不被裁切)。 */
+        .fairy {
+            --glow: rgba(255, 214, 64, .55);
+            position: relative;
+            /* 关键:min-width/min-height 防止全 absolute 子元素导致 bounds 塌缩为 0 → hitTest 半径塌成 2px
+               精灵显示区固定 160×160,容器多留 padding 装 shadow + scale + padding-bottom 28px */
+            min-width: 180px;
+            min-height: 200px;
+            width: auto;
+            height: auto;
+            cursor: pointer;
+            animation: floaty 3.2s ease-in-out infinite;
+            transition: filter .4s;
+            z-index: 2;
+            overflow: visible;       /* 关键:允许 shadow 和 pk 超出 fairy 边界不被裁切 */
+            /* GPU 合成层：transform 动画不走主线程重绘，消除像素抖动 */
+            transform: translateZ(0);
+            backface-visibility: hidden;
+            will-change: transform, filter;
+        }
+
+        .fairy .pk {
+            position: absolute;
+            left: 50%;
+            bottom: 0;
+            transform: translateX(-50%);
+            /* 关键:固定 160×160 方形显示区域 + object-fit:contain 等比缩放,
+               所有精灵(PNG正方形/WebM宽体或窄体/GIF像素)都塞进这个统一区域内,
+               视觉主体最大高度 160px、最大宽度 160px,不再因原始比例差异忽大忽小。
+               切渲染模式(3D/2D/像素)时大小完全一致,不跳变。 */
+            width: 160px;
+            height: 160px;
+            max-width: 160px;
+            max-height: 160px;
+            object-fit: contain;
+            transition: filter .4s, transform .3s;
+            -webkit-user-drag: none;
+            pointer-events: none;
+            animation: pkBreathe 3.6s ease-in-out infinite;
+            /* 高清资源用平滑缩放（浏览器默认，显式声明防覆盖）；
+               不用 crisp-edges — 那是给像素画用的，高清 HOME 插画/3D 会产生锯齿 */
+            image-rendering: auto;
+            image-rendering: -webkit-optimize-contrast;
+            /* GPU 合成层：滤镜(发光)与呼吸动画独立合成，消除边缘闪烁 */
+            transform-style: preserve-3d;
+            will-change: transform, filter;
+            backface-visibility: hidden;
+        }
+
+        /* video 精灵 (HOME 官方 3D 动画) —— 清除 video 原生默认边框/背景 */
+        .fairy .pk.video {
+            background: transparent;
+            border-radius: 0;
+            outline: none;
+            box-shadow: none;
+        }
+
+        
+        /* 像素风专用(crisp-edges 保持锐利,不平滑缩放) —— 只有 gif 模式才用 */
+        .fairy .pk.pixel {
+            image-rendering: pixelated;
+            image-rendering: -moz-crisp-edges;
+        }
+
+.fairy .shadow {
+            position: absolute;
+            left: 50%;
+            bottom: -10px;          /* 扩大阴影范围,精灵变大了阴影也跟着变大 */
+            width: 120px;
+            height: 18px;
+            margin-left: -60px;
+            border-radius: 50%;
+            background: rgba(20, 26, 48, .35);
+            filter: blur(4px);
+            animation: shadowPulse 3.2s ease-in-out infinite;
+        }
+
+        .fairy .spark {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            font-size: 15px;
+            opacity: 0;
+            pointer-events: none;
+            z-index: 4;
+        }
+
+        .spark.go {
+            animation: sparkle .8s ease-out;
+        }
+
+        /* ============ 十只宝可梦的属性主色光晕（运行态发光取色） ============ */
+        .fairy[data-skin="pikachu"] {
+            --glow: rgba(255, 214, 64, .55);
+        }
+
+        .fairy[data-skin="eevee"] {
+            --glow: rgba(226, 168, 96, .5);
+        }
+
+        .fairy[data-skin="bulbasaur"] {
+            --glow: rgba(124, 199, 96, .5);
+        }
+
+        .fairy[data-skin="charmander"] {
+            --glow: rgba(255, 148, 76, .55);
+        }
+
+        .fairy[data-skin="squirtle"] {
+            --glow: rgba(102, 168, 240, .55);
+        }
+
+        .fairy[data-skin="gengar"] {
+            --glow: rgba(150, 104, 232, .55);
+        }
+
+        .fairy[data-skin="dragonite"] {
+            --glow: rgba(255, 186, 96, .5);
+        }
+
+        .fairy[data-skin="lucario"] {
+            --glow: rgba(96, 150, 255, .55);
+        }
+
+        .fairy[data-skin="suicune"] {
+            --glow: rgba(120, 160, 255, .5);
+        }
+
+        .fairy[data-skin="mimikyu"] {
+            --glow: rgba(198, 168, 96, .45);
+        }
+
+        /* ============ 状态（全皮肤通用） ============ */
+        .fairy.running {
+            animation: bounce .62s cubic-bezier(.5, 0, .5, 1) infinite;
+        }
+
+        /* 运行态发光：双层 drop-shadow 光晕跟随图片轮廓（呼吸同步加快） */
+        .fairy.running .pk {
+            filter: drop-shadow(0 0 10px var(--glow)) drop-shadow(0 0 26px var(--glow));
+            animation-duration: 1.6s;
+        }
+
+        .fairy.running .shadow {
+            animation: shadowBounce .62s cubic-bezier(.5, 0, .5, 1) infinite;
+        }
+
+        .fairy.error {
+            filter: grayscale(.9) brightness(.82);
+            animation: floaty 4.5s ease-in-out infinite;
+        }
+
+        /* 异常态微微歪头（无精打采；灰度由容器 filter 处理）。
+           animation: none 释放 transform 声明（否则呼吸 keyframes 会覆盖歪头） */
+        .fairy.error .pk {
+            animation: none;
+            transform: translateX(-50%) rotate(5deg);
+        }
+
+        .fairy.dragging {
+            opacity: .82;
+        }
+
+        /* 运行徽标 */
+        .badge {
+            position: absolute;
+            top: 8px;
+            left: 50%;
+            transform: translateX(-50%) translateY(-4px);
+            display: none;
+            align-items: center;
+            gap: 5px;
+            padding: 3px 9px;
+            border-radius: 999px;
+            background: #0f1626;
+            border: 1px solid rgba(91, 140, 255, .4);
+            color: #cfe0ff;
+            font-size: 11px;
+            white-space: nowrap;
+            opacity: 0;
+            transition: opacity .3s, transform .3s;
+            z-index: 3;
+        }
+
+        .badge .dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: #6ef0a8;
+            box-shadow: 0 0 6px #6ef0a8;
+            animation: dotPulse 1.2s ease-in-out infinite;
+        }
+
+        .badge.show {
+            display: flex;
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+        }
+
+
+        /* GPU 友好动画：使用 translate3d/translateZ 强制合成层，避免重绘时的像素抖动 */
+        @keyframes floaty {
+
+            0%,
+            100% {
+                transform: translate3d(0, 0, 0);
+            }
+
+            50% {
+                transform: translate3d(0, -5px, 0);
+            }
+        }
+
+        /* 高清插画呼吸缩放（keyframes 必须携带基础 translateX(-50%) 居中位） */
+        @keyframes pkBreathe {
+
+            0%,
+            100% {
+                transform: translateX(-50%) translateZ(0) scale(1);
+            }
+
+            50% {
+                transform: translateX(-50%) translateZ(0) scale(1.03);
+            }
+        }
+
+        @keyframes bounce {
+
+            0%,
+            100% {
+                transform: translate3d(0, 0, 0) scale(1, 1);
+            }
+
+            22% {
+                transform: translate3d(0, -16px, 0) scale(.96, 1.05);
+            }
+
+            42% {
+                transform: translate3d(0, 0, 0) scale(1.06, .93);
+            }
+
+            58% {
+                transform: translate3d(0, -7px, 0) scale(.99, 1.02);
+            }
+
+            74% {
+                transform: translate3d(0, 0, 0) scale(1.03, .97);
+            }
+        }
+
+        @keyframes shadowPulse {
+
+            0%,
+            100% {
+                transform: scaleX(1);
+                opacity: .8;
+            }
+
+            50% {
+                transform: scaleX(.86);
+                opacity: .55;
+            }
+        }
+
+        @keyframes shadowBounce {
+
+            0%,
+            100% {
+                transform: scaleX(1);
+                opacity: .8;
+            }
+
+            22% {
+                transform: scaleX(.66);
+                opacity: .4;
+            }
+
+            42% {
+                transform: scaleX(1.12);
+                opacity: .85;
+            }
+
+            58% {
+                transform: scaleX(.86);
+                opacity: .6;
+            }
+        }
+
+        @keyframes dotPulse {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: .35;
+            }
+        }
+
+
+        @keyframes sparkle {
+            0% {
+                opacity: 0;
+                transform: translate(-50%, 0) scale(.5);
+            }
+
+            25% {
+                opacity: 1;
+            }
+
+            100% {
+                opacity: 0;
+                transform: translate(-50%, -34px) scale(1.25);
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="stage" id="stage">
+        <div class="badge" id="badge"><span class="dot"></span><span id="badgeText"></span></div>
+        <div class="wrap" id="wrap" data-size="m">
+            <div class="fairy" id="fairy" data-skin="pikachu" title="皮卡丘 · 智能体集群 · 点击打开">
+                <!-- 初始用 <img> 静态图快速首屏渲染,JS 加载后检测 webm 并无缝替换为 <video> 动画 -->
+                <img class="pk" id="pk-el" src="/api/ext/fairy_ball/sprite/pikachu.png" alt="皮卡丘" draggable="false">
+                <div class="shadow"></div>
+                <div class="spark" id="spark">⚡</div>
+            </div>
+        </div>
+
+    </div>
+    <script>
+        (function () {
+            // —— DPI / devicePixelRatio 适配 ——
+            // Electron 透明窗口在高 DPI 屏幕上,窗口的 CSS 尺寸是缩放后的逻辑像素,
+            // 但精灵图片按 CSS 像素渲染会被 Chromium 子像素采样 → 边缘锯齿 + 动画时像素闪动。
+            // 解决:让 viewport 声明物理像素宽度,body 用 DPR 缩小回逻辑坐标;
+            // 精灵图片拿到完整物理分辨率,浏览器做高质量下采样(= 高清显示)。
+            (function dpiSetup() {
+                var dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
+                document.documentElement.style.setProperty('--dpr', dpr);
+                // 设置 viewport:用物理像素宽度,让浏览器按实际分辨率渲染
+                var w = Math.round(window.innerWidth * dpr);
+                var h = Math.round(window.innerHeight * dpr);
+                var vp = document.querySelector('meta[name="viewport"]');
+                if (!vp) {
+                    vp = document.createElement('meta');
+                    vp.name = 'viewport';
+                    document.head.appendChild(vp);
+                }
+                vp.content = 'width=' + w + ', height=' + h + ', initial-scale=' + (1 / dpr) + ', maximum-scale=1, user-scalable=no';
+                // body 反向缩放回逻辑坐标,保持现有 CSS 尺寸语义不变
+                document.body.style.transform = 'scale(' + (1 / dpr) + ')';
+                document.body.style.transformOrigin = 'top left';
+                document.body.style.width = (100 * dpr) + '%';
+                document.body.style.height = (100 * dpr) + '%';
+            })();
+
+            const fairy = document.getElementById('fairy')
+            const wrap = document.getElementById('wrap')
+            const badge = document.getElementById('badge')
+            const badgeText = document.getElementById('badgeText')
+            let spark = document.getElementById('spark')
+            const ea = window.electronAPI || {}
+            const fairyAPI = ea.fairy || {}
+            const API = (ea.apiBase || '') + '/api/ext/fairy_ball'
+
+            // —— 宝可梦皮肤与大小数据（独立菜单窗与球窗同源共享 localStorage）——
+            // 图源：HOME 官方 3D 动画 (.webm) + HOME 静态高清插画 (.png) 兜底
+            // 资源下载自 WikiDex Pokémon HOME 动画资源库
+            const SKINS = [
+                { id: 'pikachu',   name: '皮卡丘',   spark: '⚡' },
+                { id: 'eevee',     name: '伊布',     spark: '🌟' },
+                { id: 'bulbasaur', name: '妙蛙种子', spark: '🌱' },
+                { id: 'charmander',name: '小火龙',   spark: '🔥' },
+                { id: 'squirtle',  name: '杰尼龟',   spark: '💧' },
+                { id: 'gengar',    name: '耿鬼',     spark: '👻' },
+                { id: 'dragonite', name: '快龙',     spark: '🐉' },
+                { id: 'lucario',   name: '路卡利欧', spark: '🥋' },
+                { id: 'suicune',   name: '水君',     spark: '💠' },
+                { id: 'mimikyu',   name: '谜拟Q',     spark: '🎭' },
+            ]
+            const SIZES = [
+                { id: 's', name: '小' },
+                { id: 'm', name: '中' },
+                { id: 'l', name: '大' },
+            ]
+
+            let curSkin = SKINS[0]
+            let curSize = SIZES[1]
+            // 状态跟踪（提前声明：applySkin 初始化即调 refreshTitle 读取）
+            let curStatus = 'idle'
+            let runningNames = []
+
+            
+            // —— 精灵资源切换 + 渲染模式 (3d/2d/pixel) ——
+            // 渲染模式由 localStorage['fairy.renderMode'] 决定,menu.html 里切换。
+            // 浏览器自身 HTTP 缓存已足够,不需要自定义 cache/probe/timeout。
+            //
+            //   3d: webm 3D动画 优先,加载失败回退 png
+            //   2d: 直接 png 静态高清
+            //   pixel: 直接 gif 像素风 Showdown 动画
+            function _buildImg(slug, name) {
+                var img = document.createElement('img')
+                img.className = 'pk'
+                img.id = 'pk-el'
+                img.src = API + '/sprite/' + slug + '.png'
+                img.alt = name
+                img.draggable = false
+                return img
+            }
+
+            function _buildVideo(slug, name) {
+                var v = document.createElement('video')
+                v.className = 'pk video'
+                v.id = 'pk-el'
+                v.src = API + '/sprite/' + slug + '.webm'
+                v.autoplay = true
+                v.muted = true
+                v.loop = true
+                v.playsInline = true
+                v.preload = 'auto'
+                v.pointerEvents = 'none'
+                v.setAttribute('aria-hidden', 'true')
+                return v
+            }
+
+            function _buildGif(slug, name) {
+                var img = document.createElement('img')
+                img.className = 'pk pixel'
+                img.id = 'pk-el'
+                img.src = API + '/sprite/' + slug + '.gif'
+                img.alt = name
+                img.draggable = false
+                // 像素风用 crisp-edges 保持锐利,不平滑缩放
+                img.style.imageRendering = 'pixelated'
+                return img
+            }
+
+            function _swapPk(newEl) {
+                var old = document.getElementById('pk-el')
+                if (old && old.parentNode) {
+                    old.parentNode.replaceChild(newEl, old)
+                    if (old.tagName === 'VIDEO') { try { old.pause(); old.src = '' } catch (e) { } }
+                } else {
+                    fairy.insertBefore(newEl, fairy.firstChild)
+                }
+            }
+
+            function applySkin(s) {
+                curSkin = s
+                fairy.dataset.skin = s.id
+                var mode = '3d'
+                try { mode = localStorage.getItem('fairy.renderMode') || '3d' } catch (e) { }
+
+                if (mode === '2d') {
+                    // 2D 高清:直接渲染 png
+                    _swapPk(_buildImg(s.id, s.name))
+                } else if (mode === 'pixel') {
+                    // 像素风:直接渲染 gif (xyani Showdown)
+                    _swapPk(_buildGif(s.id, s.name))
+                } else {
+                    // 3D (默认):先渲染 png 兜底,webm ready 后无缝替换
+                    // 浏览器 HTTP 缓存命中时 canplaythrough 瞬间触发 → 几乎无过渡闪烁
+                    _swapPk(_buildImg(s.id, s.name))
+                    var v = _buildVideo(s.id, s.name)
+                    v.addEventListener('canplaythrough', function () {
+                        if (curSkin && curSkin.id === s.id) _swapPk(v)
+                    }, { once: true })
+                    v.addEventListener('error', function () {
+                        // webm 404 或解码失败 → 保持上面的 png 兜底,什么都不做
+                    }, { once: true })
+                }
+                try { localStorage.setItem('fairy.skin', s.id) } catch (e) { }
+                refreshTitle()
+            }
+
+            function applySize(z) {
+                curSize = z
+                wrap.dataset.size = z.id
+                try { localStorage.setItem('fairy.size', z.id) } catch (e) { }
+            }
+            function refreshTitle() {
+                if (curStatus === 'running') {
+                    const names = (runningNames || []).join('、')
+                    fairy.title = curSkin.name + ' · 智能体集群 · 运行中' + (names ? '：' + names : '')
+                } else if (curStatus === 'error') {
+                    fairy.title = curSkin.name + ' · 智能体集群 · 后端连接异常'
+                } else {
+                    fairy.title = curSkin.name + ' · 智能体集群 · 点击打开'
+                }
+            }
+
+            // 初始化：localStorage 恢复上次选择（旧版皮肤 id 已废除 → 清掉回落默认皮卡丘）
+            try {
+                const saved = localStorage.getItem('fairy.skin')
+                const s = SKINS.find(k => k.id === saved)
+                if (s) applySkin(s)
+                else if (saved) { try { localStorage.removeItem('fairy.skin') } catch (e) { } }
+                const z = SIZES.find(k => k.id === localStorage.getItem('fairy.size'))
+                if (z) applySize(z)
+            } catch (e) { }
+
+            // —— 命中测试穿透：精灵可见部分不穿透，周围空白穿透给下层窗口 ——
+            // 方案：setIgnoreMouseEvents(true,{forward:true})——穿透期间 mousemove 仍派发到本页，
+            // 据此做 elementFromPoint 实时命中测试；rAF 循环每帧重判，补偿精灵动画位移
+            // （bounce/floaty 移动后无需等下一次 mousemove 即翻转穿透状态）。
+            // 之前 mouseenter/mouseleave 悬停合成方案的时序竞态由此根除。
+            let passthrough = true
+            let lastMouse = null
+            function setPassthrough(v) {
+                if (v === passthrough) return
+                passthrough = v
+                try { fairyAPI.setIgnoreMouse && fairyAPI.setIgnoreMouse(v) } catch (e) { }
+            }
+            function hitTest(x, y) {
+                // 按住拖动中 → 整窗接收（拖动事件流不能断；菜单已在独立窗，点外部由捕获层关闭）
+                if (press) return false
+                // 徽标可见区 → 接收
+                const el = document.elementFromPoint(x, y)
+                if (el && el.closest('#badge')) return false
+                // 精灵命中 = 精灵本体 #pk-el 的 bounding rect + 4px 热区缓冲
+                // 用 #pk-el 而不是 #fairy:fairy 因为全 absolute 子元素 bounds 可能塌缩
+                // getBoundingClientRect 已自动含 transform(scale/floaty/pkBreathe)的实时位移
+                var pk = document.getElementById('pk-el')
+                if (!pk) return true                          // pk 还没加载 → 默认穿透
+                var r = pk.getBoundingClientRect()
+                if (r.width < 1 || r.height < 1) return true   // bounds 异常(精灵未显示)→ 穿透
+                var PAD = 6                                    // 点击热区缓冲(精灵边缘外扩 6px)
+                return x < r.left - PAD || x > r.right + PAD ||
+                       y < r.top - PAD || y > r.bottom + PAD
+            }
+            function refreshHit() {
+                if (lastMouse != null) setPassthrough(hitTest(lastMouse.x, lastMouse.y))
+            }
+
+            window.addEventListener('mousemove', (e) => {
+                lastMouse = { x: e.clientX, y: e.clientY }
+                refreshHit()
+            }, true)
+                ; (function pollHit() {
+                    refreshHit()
+                    requestAnimationFrame(pollHit)
+                })()
+            setPassthrough(true)   // 初始穿透（窗口大部分是空白）
+
+
+            // —— 拖动 vs 点击（位移 > 4px 判定为拖动窗口）——
+            let press = null
+            fairy.addEventListener('mousedown', (e) => {
+                if (e.button !== 0) return
+                press = { sx: e.screenX, sy: e.screenY, wx: null, wy: null, moved: false }
+                Promise.resolve(fairyAPI.winPos ? fairyAPI.winPos() : null).then((p) => {
+                    if (press && !press.moved && p) { press.wx = p.x, press.wy = p.y }
+                })
+            })
+            window.addEventListener('mousemove', (e) => {
+                if (!press) return
+                const dx = e.screenX - press.sx, dy = e.screenY - press.sy
+                if (!press.moved && Math.abs(dx) + Math.abs(dy) > 4) {
+                    press.moved = true
+                    fairy.classList.add('dragging')
+                }
+                if (press.moved && press.wx != null) {
+                    fairyAPI.moveTo && fairyAPI.moveTo(press.wx + dx, press.wy + dy)
+                }
+            })
+            window.addEventListener('mouseup', () => {
+                if (!press) return
+                const wasDrag = press.moved
+                press = null
+                fairy.classList.remove('dragging')
+                if (wasDrag) { return }
+                // 点击 → 惊喜动画 + 打开主窗口
+                if (spark) { spark.classList.remove('go'); void spark.offsetWidth; spark.classList.add('go') }
+                fairyAPI.openMain && fairyAPI.openMain()
+            })
+
+            // —— 右键菜单：独立置顶小窗（主进程按屏幕工作区钳制定位防出界、失焦自动收起）——
+            // 精灵/徽标上右键弹出；空白区域已穿透，右键归下层窗口
+            document.addEventListener('contextmenu', (e) => {
+                e.preventDefault()
+                fairyAPI.openMenu && fairyAPI.openMenu(e.screenX, e.screenY)
+            })
+
+            // —— 换装同步：独立菜单窗写 localStorage → storage 事件跨窗感知（同源）即时换装 ——
+            window.addEventListener('storage', (e) => {
+                if (e.key === 'fairy.skin') {
+                    const s = SKINS.find(k => k.id === e.newValue)
+                    if (s && s.id !== curSkin.id) applySkin(s)
+                } else if (e.key === 'fairy.size') {
+                    const z = SIZES.find(k => k.id === e.newValue)
+                    if (z && z.id !== curSize.id) applySize(z)
+                } else if (e.key === 'fairy.renderMode') {
+                    // 渲染模式切换 → 即时重新 applySkin 用新模式重新渲染当前精灵
+                    if (curSkin) applySkin(curSkin)
+                }
+            })
+
+            // —— 状态轮询：idle / running / error ——
+            async function poll() {
+                try {
+                    const res = await fetch(API + '/state', { signal: AbortSignal.timeout(2500) })
+                    if (!res.ok) throw new Error('http ' + res.status)
+                    const data = await res.json()
+                    setStatus(data.status || 'idle', data.running || [])
+                } catch (e) {
+                    setStatus('error', [])
+                }
+            }
+            function setStatus(st, running) {
+                if (st !== curStatus) {
+                    fairy.classList.remove('running', 'error')
+                    if (st === 'running') fairy.classList.add('running')
+                    if (st === 'error') fairy.classList.add('error')
+                    curStatus = st
+                }
+                if (st === 'running' && running.length) {
+                    runningNames = running.map((r) => r.agent_name || ('#' + r.agent_id))
+                    const names = runningNames.join('、')
+                    badgeText.textContent = running.length > 1 ? (running.length + ' 个智能体运行中') : (names + ' 运行中')
+                    badge.classList.add('show')
+                    refreshTitle()
+                } else {
+                    runningNames = []
+                    badge.classList.remove('show')
+                    refreshTitle()
+                }
+            }
+            poll()
+            setInterval(poll, 3000)
+        })()
+    </script>
+</body>
+
+</html>

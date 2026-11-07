@@ -1,0 +1,24 @@
+{
+    "id": "fairy_ball",
+    "name": "精灵悬浮球",
+    "version": "1.4.0",
+    "type": "hybrid",
+    "author": "AgentCluster",
+    "description": "桌面宝可梦精灵悬浮球：随智能体运行状态活动（空闲漂浮/运行中欢快弹跳+属性主色光晕/后端异常变灰歪头）；左键点击打开主窗口，右键弹出独立菜单窗（屏幕边缘自动翻转防出界、失焦自动收起）：区域截图提问、临时对话小窗、打开设置，并可切换 10 只特色宝可梦（皮卡丘/伊布/妙蛙种子/小火龙/杰尼龟/耿鬼/快龙/路卡利欧/水君/谜拟Q，Showdown 官方像素动图）与三档悬浮球大小，选择本地记忆",
+    "icon": "⚡",
+    "tags": [
+        "companion",
+        "float",
+        "screenshot",
+        "quickchat",
+        "skin",
+        "size"
+    ],
+    "frontend_files": [],
+    "backend_entry": "backend",
+    "pages": [
+        "fairy.html",
+        "menu.html",
+        "snip.html"
+    ]
+}
