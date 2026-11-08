@@ -33,5 +33,6 @@
   "tools": [
     "browser_control"
   ],
-  "group_name": "游戏"
+  "group_name": "游戏",
+  "agent_key": "agent-22"
 }

@@ -29,5 +29,6 @@
   "max_tool_rounds": null,
   "perception_scope": "link",
   "workflow_mode": "goal",
-  "group_name": "游戏"
+  "group_name": "游戏",
+  "agent_key": "agent-21"
 }

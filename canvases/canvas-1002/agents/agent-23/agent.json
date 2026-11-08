@@ -36,5 +36,6 @@
     "browser_control",
     "http_request"
   ],
-  "group_name": "游戏"
+  "group_name": "游戏",
+  "agent_key": "agent-23"
 }

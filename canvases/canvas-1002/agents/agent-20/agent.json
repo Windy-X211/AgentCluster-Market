@@ -32,5 +32,6 @@
   ],
   "perception_scope": "link",
   "workflow_mode": "spec",
-  "group_name": "游戏"
+  "group_name": "游戏",
+  "agent_key": "agent-20"
 }

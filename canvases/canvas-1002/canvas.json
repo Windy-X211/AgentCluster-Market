@@ -5,136 +5,125 @@
     {
       "id": 1,
       "agent_ref": "游戏项目总经理",
-      "x": -816.1940577077035,
-      "y": -46.152875604879256
+      "x": -1175.7440921466891,
+      "y": -24.09501914756305,
+      "agent_key": "agent-19"
     },
     {
       "id": 2,
       "agent_ref": "游戏策划师",
-      "x": -394.492265017368,
-      "y": -377.13910905127835
+      "x": -1173.1488921466894,
+      "y": 162.55564751910362,
+      "agent_key": "agent-20"
     },
     {
       "id": 3,
       "agent_ref": "游戏剧情编剧",
-      "x": -182.7832387923538,
-      "y": -205.05281241745325
+      "x": -1355.7440921466891,
+      "y": 365.6660475191036,
+      "agent_key": "agent-21"
     },
     {
       "id": 4,
       "agent_ref": "游戏美术设计师",
-      "x": 129.85717933081412,
-      "y": -205.05281241745325
+      "x": -993.1488921466894,
+      "y": 365.6660475191036,
+      "agent_key": "agent-22"
     },
     {
       "id": 5,
       "agent_ref": "游戏程序员",
-      "x": -394.492265017368,
-      "y": -46.152875604879256
+      "x": -1173.1488921466894,
+      "y": 592.4393808524368,
+      "agent_key": "agent-23"
     },
     {
-      "id": 27,
+      "id": 6,
       "agent_ref": "游戏环境工程师",
-      "x": -394.492265017368,
-      "y": 216.85701812159405
+      "x": -863.0827588133557,
+      "y": 592.4393808524368,
+      "agent_key": "agent-39"
     },
     {
-      "id": 28,
+      "id": 7,
       "agent_ref": "游戏质量验收官",
-      "x": 129.85717933081415,
-      "y": 71.29634492414598
+      "x": -1173.1488921466894,
+      "y": 839.6927141857701,
+      "agent_key": "agent-40"
     }
   ],
   "edges": [
     {
-      "id": 6,
+      "id": 1,
       "from_node": 1,
       "to_node": 2,
-      "type": "handoff"
+      "type": "chat",
+      "shape": "straight",
+      "waypoints": []
     },
     {
-      "id": 29,
+      "id": 2,
       "from_node": 2,
       "to_node": 3,
-      "type": "handoff"
+      "type": "chat",
+      "shape": "straight",
+      "waypoints": []
     },
     {
-      "id": 30,
+      "id": 3,
       "from_node": 2,
       "to_node": 4,
-      "type": "handoff"
+      "type": "chat",
+      "shape": "straight",
+      "waypoints": []
     },
     {
-      "id": 31,
-      "from_node": 2,
-      "to_node": 5,
-      "type": "handoff"
-    },
-    {
-      "id": 32,
+      "id": 4,
       "from_node": 3,
       "to_node": 5,
-      "type": "handoff"
+      "type": "chat",
+      "shape": "straight",
+      "waypoints": []
     },
     {
-      "id": 33,
+      "id": 5,
       "from_node": 4,
       "to_node": 5,
-      "type": "handoff"
+      "type": "chat",
+      "shape": "straight",
+      "waypoints": []
     },
     {
-      "id": 34,
+      "id": 6,
       "from_node": 5,
-      "to_node": 27,
-      "type": "handoff"
+      "to_node": 6,
+      "type": "chat",
+      "shape": "curve",
+      "waypoints": []
     },
     {
-      "id": 35,
-      "from_node": 5,
-      "to_node": 28,
-      "type": "handoff"
-    },
-    {
-      "id": 36,
-      "from_node": 27,
-      "to_node": 28,
-      "type": "handoff"
-    },
-    {
-      "id": 38,
-      "from_node": 3,
-      "to_node": 4,
-      "type": "chat"
-    },
-    {
-      "id": 39,
-      "from_node": 1,
+      "id": 7,
+      "from_node": 6,
       "to_node": 5,
-      "type": "chat"
+      "type": "chat",
+      "shape": "curve",
+      "waypoints": []
     },
     {
-      "id": 40,
-      "from_node": 1,
-      "to_node": 4,
-      "type": "chat"
+      "id": 8,
+      "from_node": 5,
+      "to_node": 7,
+      "type": "chat",
+      "shape": "straight",
+      "waypoints": []
     },
     {
-      "id": 41,
-      "from_node": 1,
-      "to_node": 3,
-      "type": "chat"
-    },
-    {
-      "id": 42,
-      "from_node": 1,
-      "to_node": 28,
-      "type": "chat"
-    },
-    {
-      "id": 43,
-      "from_node": 1,
-      "to_node": 27,
-      "type": "chat"
+      "id": 9,
+      "from_node": 7,
+      "to_node": 1,
+      "type": "chat",
+      "shape": "curve",
+      "waypoints": []
     }
   ],
   "execution_mode": "serial",
@@ -176,7 +165,8 @@
         "browser_control"
       ],
       "reasoning_level": "off",
-      "group_name": "游戏"
+      "group_name": "游戏",
+      "agent_key": "agent-19"
     },
     {
       "name": "游戏策划师",
@@ -212,7 +202,8 @@
       ],
       "perception_scope": "link",
       "workflow_mode": "spec",
-      "group_name": "游戏"
+      "group_name": "游戏",
+      "agent_key": "agent-20"
     },
     {
       "name": "游戏剧情编剧",
@@ -245,7 +236,8 @@
       "max_tool_rounds": null,
       "perception_scope": "link",
       "workflow_mode": "goal",
-      "group_name": "游戏"
+      "group_name": "游戏",
+      "agent_key": "agent-21"
     },
     {
       "name": "游戏美术设计师",
@@ -282,7 +274,8 @@
       "tools": [
         "browser_control"
       ],
-      "group_name": "游戏"
+      "group_name": "游戏",
+      "agent_key": "agent-22"
     },
     {
       "name": "游戏程序员",
@@ -322,7 +315,8 @@
         "browser_control",
         "http_request"
       ],
-      "group_name": "游戏"
+      "group_name": "游戏",
+      "agent_key": "agent-23"
     },
     {
       "name": "游戏环境工程师",
@@ -357,7 +351,8 @@
       "max_tool_rounds": null,
       "perception_scope": "link",
       "workflow_mode": "none",
-      "group_name": "游戏"
+      "group_name": "游戏",
+      "agent_key": "agent-39"
     },
     {
       "name": "游戏质量验收官",
@@ -393,7 +388,8 @@
       "max_tool_rounds": null,
       "perception_scope": "link",
       "workflow_mode": "none",
-      "group_name": "游戏"
+      "group_name": "游戏",
+      "agent_key": "agent-40"
     }
   ],
   "agent_groups": [

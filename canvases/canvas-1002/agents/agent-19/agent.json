@@ -35,5 +35,6 @@
     "browser_control"
   ],
   "reasoning_level": "off",
-  "group_name": "游戏"
+  "group_name": "游戏",
+  "agent_key": "agent-19"
 }
