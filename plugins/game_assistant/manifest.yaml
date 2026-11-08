@@ -1,0 +1,54 @@
+# game_assistant 插件 —— 单机游戏存档读取与修改助手
+# 纯标准库实现（零第三方依赖），支持扫描/读取/分析/修改/备份/恢复。
+
+version: "1.0.0"
+type: "plugin"
+name: "game_assistant"
+label:
+  zh_Hans: "游戏助手"
+  en_US: "Game Assistant"
+author: "AgentCluster"
+description:
+  zh_Hans: |
+    ⚠️ 免责声明（必读）⚠️
+    本插件仅支持单机游戏！在联机游戏或多人游戏中使用本插件读取/修改存档
+    （包括云存档、共享存档、房间存档等），可能导致存档损坏、数据回档、
+    成绩失效、账号封禁等后果，一切后果由使用者自行承担。
+
+    ★ 是什么 ★
+    游戏存档的读取与修改助手：告诉智能体游戏名和想改什么，它会自己找到存档、
+    分析结构、按你的指令修改数据，并且每次修改前自动备份、随时可一键还原。
+
+    ★ 典型用法 ★
+    1. 「扫描一下我电脑上的星露谷物语存档」→ 扫描 Documents / Saved Games /
+       AppData 等常见位置，列出存档文件；
+    2. 「看看这个存档里我有多少钱」→ 智能解析存档（JSON 键树 / 文本 / 二进制
+       hexdump），定位数值字段；
+    3. 「把金币改成 99999」→ 按字段精确修改（JSON）或文本/字节替换，
+       修改前自动备份，返回新旧值对比；
+    4. 「改坏了，帮我恢复昨天的备份」→ listBackups + restore 一键还原。
+
+    ★ 支持的存档形态 ★
+    1. JSON 存档：字段级精确修改（支持点分路径与数组下标）；
+    2. 纯文本存档（cfg/ini/xml 等）：查找替换，支持正则；
+    3. 二进制存档：hexdump 预览 + 可读字符串提取 + 等长字节替换
+       （数值需注意小端序，多处命中需显式确认）；
+    4. zip 容器存档（如群星）：识别并给出提示，建议谨慎操作。
+
+    ★ 安全机制 ★
+    1. 所有修改写盘前强制自动备份（集中存放，不污染游戏目录）；
+    2. 备份日志完整可查（时间 / 来源 / 备份路径 / 备注）；
+    3. 恢复前对当前文件再做一次安全备份；
+    4. 超过 100MB 的文件拒绝处理；二进制替换强制等长。
+    建议：修改前先关闭游戏（运行中的游戏可能在退出时用内存数据覆盖存档）。
+
+    ★ 环境要求 ★
+    Windows，纯 Python 标准库，零第三方依赖。
+  en_US: |
+    Read and edit single-player game saves via natural language: scan common
+    save locations, analyze structure (JSON tree / text / binary hexdump),
+    modify values with automatic backup and one-click restore.
+    DISCLAIMER: For SINGLE-PLAYER games ONLY. Using it on online/multiplayer
+    games (including cloud/shared saves) may corrupt saves, trigger rollback
+    or bans. All consequences are at the user's own risk.
+dependencies: {}

@@ -1,0 +1,191 @@
+# game_assistant 插件的 tool 定义 —— 单机游戏存档读取与修改
+
+identity:
+  name: "game_assistant"
+  author: "AgentCluster"
+version: "1.0.0"
+
+description:
+  zh_Hans: |
+    单机游戏存档读取与修改助手：扫描存档、解析结构、按用户指令修改数据、
+    自动备份与恢复。
+
+    ═══════════════════════════════════════════════════════
+    ★★★ 免责声明（必须遵守）★★★
+    ═══════════════════════════════════════════════════════
+    本插件仅支持单机游戏。在联机游戏或多人游戏中使用（含云存档、共享存档）
+    可能导致存档损坏、数据回档、账号封禁等后果，一切后果由使用者自行承担。
+    当用户要求修改存档时，若怀疑该存档属于联机/多人游戏（如共享世界档、
+    云同步档），必须先向用户复述此免责声明并确认；用户确认后方可继续。
+
+    ═══════════════════════════════════════════════════════
+    ★★★ 典型工作流 ★★★
+    ═══════════════════════════════════════════════════════
+    1. scanSaves 定位存档：传游戏名关键词（中英文都试），从返回的 files 里
+       按 mtime 挑最新、最大的文件；
+    2. readSave 看内容：text 类型看 preview；binary 类型看 hexdump 和 strings；
+       zip 容器（kind=binary + container=zip）提示用户该格式风险更高；
+    3. 看起来是 JSON：analyzeJson 先 summary → search 搜数值/关键词定位
+       目标字段的 path → editJson 按 path 修改；
+    4. 文本存档：editText 查找替换（精确串优先，正则兜底）；
+    5. 二进制存档：readSave 的 hexdump 找数值字节（小端序！如 float 9999.0
+       = 0x461C3000 小端写成 00 30 1C 46）→ hexReplace 等长替换；
+    6. 出问题：listBackups + restore 还原（restore 前会再自动备份当前状态）。
+
+    ═══════════════════════════════════════════════════════
+    ★★★ action 清单 ★★★
+    ═══════════════════════════════════════════════════════
+    run(action="scanSaves", keyword="星露谷", maxResults=40)
+      # 不传 keyword 仅浏览 My Games/Saved Games/Paradox 目录概览
+      # 传关键词扩大到 Documents/AppData 全部常见位置（目录名子串匹配）
+    run(action="readSave", filePath="...", maxLines=120, maxBytes=65536)
+      # 自动判别 text/binary/zip 容器；binary 返回 hexdump + ASCII/UTF16 字符串
+    run(action="analyzeJson", filePath="...", keyPath="", search="", maxResults=50)
+      # 三个模式：都不传=顶层概览；keyPath=取该路径的值；search=全文搜索
+      # keyPath 语法：点分路径，数组下标用数字，如 player.items.2.count
+      # search 数值匹配十进制相等（9999 与 9999.0 等价），字符串/键名子串匹配
+    run(action="editJson", filePath="...", keyPath="player.gold", op="set", value=99999)
+      # op: set(默认)/append(数组追加)/delete(删键)
+      # 缺失的中间 dict 键自动创建（createMissing=false 关闭）
+      # value 能按 JSON 解析就用解析值：'99999'→数字, 'true'→布尔,
+      # '"10"'→字符串"10"；复杂对象可传 JSON 字符串
+    run(action="editText", filePath="...", find="gold=100", replace="gold=999",
+        regex=false, maxCount=0)
+      # 无匹配时报错且不落盘；regex=true 时 find 为正则、replace 支持 \1 分组
+    run(action="hexReplace", filePath="...", findHex="00 30 1C 46",
+        replaceHex="00 60 1D 46", replaceAll=false, offset=-1)
+      # 等长字节替换；hex 可含空格；多处命中默认拒改并列出 offsets，
+      # 确认后 replaceAll=true 全替换或 offset=<位置> 单点替换
+    run(action="backup", filePath="...", note="改金币前备份")   # 手动备份
+    run(action="listBackups", filePath="...")                   # 列备份
+    run(action="restore", filePath="...", timestamp="20261108_153000")
+
+    ═══════════════════════════════════════════════════════
+    ★★★ 注意事项 ★★★
+    ═══════════════════════════════════════════════════════
+    1. 修改前建议提醒用户关闭游戏（退出时可能用内存数据覆盖存档）；
+    2. 所有修改动作自动备份（返回 backup 字段即备份路径），主动向用户报备；
+    3. editJson 会重新缩进 JSON；游戏若对格式敏感，读档异常就立即 restore；
+    4. 二进制数值一律先确认字节序与类型宽度，猜错字节会损坏存档（可 restore）；
+    5. hexReplace 的 find/replace 字节数必须相等，不等长会直接报错；
+    6. 文件超过 100MB 拒绝处理；
+    7. 返回里的 disclaimer（单机免责声明）在向用户汇报时应原样转述。
+parameters:
+  - name: "action"
+    type: string
+    required: true
+    description: "要执行的操作"
+    enum:
+      - "scanSaves"
+      - "readSave"
+      - "analyzeJson"
+      - "editJson"
+      - "editText"
+      - "hexReplace"
+      - "backup"
+      - "listBackups"
+      - "restore"
+
+  - name: "keyword"
+    type: string
+    required: false
+    description: "scanSaves：游戏名关键词（中英文均可），匹配目录名子串"
+
+  - name: "maxResults"
+    type: number
+    required: false
+    description: "scanSaves/analyzeJson：最多返回条数（默认 40 / 50，上限 200）"
+
+  - name: "filePath"
+    type: string
+    required: false
+    description: "存档文件的完整路径（readSave/analyzeJson/editJson/editText/hexReplace/backup/listBackups/restore 必填）"
+
+  - name: "maxLines"
+    type: number
+    required: false
+    description: "readSave：文本预览行数（默认 120，上限 2000）"
+
+  - name: "maxBytes"
+    type: number
+    required: false
+    description: "readSave：二进制预览字节数（默认 65536，上限 512KB）"
+
+  - name: "keyPath"
+    type: string
+    required: false
+    description: "analyzeJson/editJson：点分路径，数组下标用数字，如 player.items.2.count；editJson 的 append 传数组所在路径"
+
+  - name: "search"
+    type: string
+    required: false
+    description: "analyzeJson：全文搜索词（数值按十进制相等，字符串/键名按子串）"
+
+  - name: "op"
+    type: string
+    required: false
+    description: "editJson：set（默认）/ append（数组追加）/ delete（删键或删数组元素）"
+    enum: ["set", "append", "delete"]
+
+  - name: "value"
+    type: string
+    required: false
+    description: "editJson：新值。能按 JSON 解析就用解析值（'99999'→数字、'true'→布尔、'"10"'→字符串）；对象/数组可传 JSON 字符串；append 追加到数组尾部"
+
+  - name: "createMissing"
+    type: boolean
+    required: false
+    description: "editJson：缺失的中间 dict 键是否自动创建（默认 true）"
+    default: true
+
+  - name: "find"
+    type: string
+    required: false
+    description: "editText：要查找的内容（regex=true 时为正则表达式）"
+
+  - name: "replace"
+    type: string
+    required: false
+    description: "editText：替换为的内容（regex=true 时支持 \1 分组引用；传空即删除）"
+
+  - name: "regex"
+    type: boolean
+    required: false
+    description: "editText：find 是否按正则解释（默认 false 字面匹配）"
+    default: false
+
+  - name: "maxCount"
+    type: number
+    required: false
+    description: "editText：最多替换次数（0 或缺省=全部）"
+
+  - name: "findHex"
+    type: string
+    required: false
+    description: "hexReplace：目标字节序列的 hex（可含空格，如 00 30 1C 46）"
+
+  - name: "replaceHex"
+    type: string
+    required: false
+    description: "hexReplace：替换字节的 hex（必须与 findHex 等长）"
+
+  - name: "replaceAll"
+    type: boolean
+    required: false
+    description: "hexReplace：多处命中时是否全部替换（默认 false：单处直接改，多处拒改列 offsets）"
+    default: false
+
+  - name: "offset"
+    type: number
+    required: false
+    description: "hexReplace：只替换指定偏移处的一处命中（默认 -1 不启用）"
+
+  - name: "note"
+    type: string
+    required: false
+    description: "backup：备份备注（写入备份日志）"
+
+  - name: "timestamp"
+    type: string
+    required: false
+    description: "restore：要恢复的备份时间戳（备份文件名中的 YYYYMMDD_HHMMSS 段，见 listBackups）"
