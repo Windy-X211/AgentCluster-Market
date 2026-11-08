@@ -1,7 +1,28 @@
 {
   "version": "1.0",
-  "updated_at": "2026-11-08T11:00:02",
+  "updated_at": "2026-11-08T11:00:50",
   "items": [
+    {
+      "kind": "skill",
+      "id": "progress-email-notify",
+      "dir": "skills/progress-email-notify",
+      "updated_at": "2026-11-08T11:00:50",
+      "version": "1.0.0",
+      "author": "Windy-X211",
+      "name": "任务进度邮件通知",
+      "description": "长任务进行中把进度以邮件形式定时或分阶段推送给用户。当用户说\"进度发我邮箱\"、\"把进度发邮件给我\"、\"定时发进度邮件\"、\"每10分钟汇报一次进度\"、\"任务完成发邮件通知我\"、\"重新配置邮箱\"、\"改邮箱设置\"、\"换个邮箱收通知\"时加载此技能。",
+      "icon": "🧠",
+      "tags": [
+        "email",
+        "notification",
+        "progress-report",
+        "smtp",
+        "long-task",
+        "automation"
+      ],
+      "label": "任务进度邮件通知",
+      "skill_name": "progress-email-notify"
+    },
     {
       "kind": "plugin",
       "id": "cad_bridge",
