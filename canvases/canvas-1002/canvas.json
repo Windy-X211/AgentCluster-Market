@@ -126,7 +126,7 @@
       "waypoints": []
     }
   ],
-  "execution_mode": "serial",
+  "execution_mode": "parallel",
   "agents": [
     {
       "name": "游戏项目总经理",

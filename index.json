@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "updated_at": "2026-11-08T11:12:49",
+  "updated_at": "2026-11-08T11:13:44",
   "items": [
     {
       "kind": "canvas",
@@ -16,7 +16,7 @@
       ],
       "dir": "canvases/canvas-1002",
       "file": "canvas.json",
-      "updated_at": "2026-11-08T11:12:49",
+      "updated_at": "2026-11-08T11:13:44",
       "origin_canvas_id": 1002,
       "agent_count": 7,
       "agent_group_count": 1,
