@@ -1,0 +1,27 @@
+{
+  "name": "② 规划拆解（规格→任务）",
+  "description": "技能分组：② 规划拆解（规格→任务）（5 项能力）",
+  "members": [
+    {
+      "type": "skills",
+      "key": "to-spec"
+    },
+    {
+      "type": "skills",
+      "key": "to-tickets"
+    },
+    {
+      "type": "skills",
+      "key": "wayfinder"
+    },
+    {
+      "type": "skills",
+      "key": "loop-me"
+    },
+    {
+      "type": "skills",
+      "key": "triage"
+    }
+  ],
+  "source_kind": "group"
+}

@@ -1,0 +1,27 @@
+{
+  "name": "⑥ 环境配置（一次性初始化）",
+  "description": "技能分组：⑥ 环境配置（一次性初始化）（5 项能力）",
+  "members": [
+    {
+      "type": "skills",
+      "key": "setup-matt-pocock-skills"
+    },
+    {
+      "type": "skills",
+      "key": "setup-pre-commit"
+    },
+    {
+      "type": "skills",
+      "key": "setup-ts-deep-modules"
+    },
+    {
+      "type": "skills",
+      "key": "git-guardrails-claude-code"
+    },
+    {
+      "type": "skills",
+      "key": "wizard"
+    }
+  ],
+  "source_kind": "group"
+}

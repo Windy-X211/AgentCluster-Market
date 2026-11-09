@@ -1,0 +1,27 @@
+{
+  "name": "① 澄清访谈（问清楚再动手）",
+  "description": "技能分组：① 澄清访谈（问清楚再动手）（5 项能力）",
+  "members": [
+    {
+      "type": "skills",
+      "key": "grilling"
+    },
+    {
+      "type": "skills",
+      "key": "grill-me"
+    },
+    {
+      "type": "skills",
+      "key": "grill-with-docs"
+    },
+    {
+      "type": "skills",
+      "key": "to-questionnaire"
+    },
+    {
+      "type": "skills",
+      "key": "wait-what"
+    }
+  ],
+  "source_kind": "group"
+}

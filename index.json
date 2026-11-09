@@ -1,20 +1,144 @@
 {
   "version": "1.0",
-  "updated_at": "2026-11-08T12:52:52",
+  "updated_at": "2026-11-09T21:41:23",
   "items": [
     {
-      "kind": "skill",
-      "id": "code-animation-prompts",
-      "dir": "skills/code-animation-prompts",
-      "updated_at": "2026-11-08T21:04:43",
+      "kind": "combo",
+      "id": "combo-d98667b203",
+      "name": "① 澄清访谈（问清楚再动手）",
+      "description": "技能分组：① 澄清访谈（问清楚再动手）（5 项能力）",
       "version": "1.0.0",
       "author": "Windy-X211",
-      "name": "代码动画",
-      "description": "使用 341 种风格提示词和参考静帧制作代码动画、HTML 动效或视频。适用于按风格编号选型、组合视觉风格、把内容转成可编辑动画并渲染成片。",
-      "icon": "🧠",
-      "tags": [],
-      "label": "代码动画",
-      "skill_name": "code-animation-prompts"
+      "icon": "🎯",
+      "tags": [
+        "5 技能"
+      ],
+      "dir": "combos/combo-d98667b203",
+      "file": "combo.json",
+      "updated_at": "2026-11-09T21:41:23",
+      "source_kind": "group",
+      "member_count": 5,
+      "member_counts": {
+        "commands": 0,
+        "skills": 5,
+        "plugins": 0
+      },
+      "origin_combo": "group:skills:① 澄清访谈（问清楚再动手）"
+    },
+    {
+      "kind": "combo",
+      "id": "combo-2479a2e7bb",
+      "name": "② 规划拆解（规格→任务）",
+      "description": "技能分组：② 规划拆解（规格→任务）（5 项能力）",
+      "version": "1.0.0",
+      "author": "Windy-X211",
+      "icon": "🎯",
+      "tags": [
+        "5 技能"
+      ],
+      "dir": "combos/combo-2479a2e7bb",
+      "file": "combo.json",
+      "updated_at": "2026-11-09T21:41:23",
+      "source_kind": "group",
+      "member_count": 5,
+      "member_counts": {
+        "commands": 0,
+        "skills": 5,
+        "plugins": 0
+      },
+      "origin_combo": "group:skills:② 规划拆解（规格→任务）"
+    },
+    {
+      "kind": "combo",
+      "id": "combo-2499b019a5",
+      "name": "③ 编码实现（写码循环）",
+      "description": "技能分组：③ 编码实现（写码循环）（6 项能力）",
+      "version": "1.0.0",
+      "author": "Windy-X211",
+      "icon": "🎯",
+      "tags": [
+        "6 技能"
+      ],
+      "dir": "combos/combo-2499b019a5",
+      "file": "combo.json",
+      "updated_at": "2026-11-09T21:41:23",
+      "source_kind": "group",
+      "member_count": 6,
+      "member_counts": {
+        "commands": 0,
+        "skills": 6,
+        "plugins": 0
+      },
+      "origin_combo": "group:skills:③ 编码实现（写码循环）"
+    },
+    {
+      "kind": "combo",
+      "id": "pr",
+      "name": "④ 审查收尾（审+PR+复盘）",
+      "description": "技能分组：④ 审查收尾（审+PR+复盘）（3 项能力）",
+      "version": "1.0.0",
+      "author": "Windy-X211",
+      "icon": "🎯",
+      "tags": [
+        "3 技能"
+      ],
+      "dir": "combos/pr",
+      "file": "combo.json",
+      "updated_at": "2026-11-09T21:41:23",
+      "source_kind": "group",
+      "member_count": 3,
+      "member_counts": {
+        "commands": 0,
+        "skills": 3,
+        "plugins": 0
+      },
+      "origin_combo": "group:skills:④ 审查收尾（审+PR+复盘）"
+    },
+    {
+      "kind": "combo",
+      "id": "combo-e8796bfad4",
+      "name": "⑤ 架构设计（底层词汇）",
+      "description": "技能分组：⑤ 架构设计（底层词汇）（3 项能力）",
+      "version": "1.0.0",
+      "author": "Windy-X211",
+      "icon": "🎯",
+      "tags": [
+        "3 技能"
+      ],
+      "dir": "combos/combo-e8796bfad4",
+      "file": "combo.json",
+      "updated_at": "2026-11-09T21:41:23",
+      "source_kind": "group",
+      "member_count": 3,
+      "member_counts": {
+        "commands": 0,
+        "skills": 3,
+        "plugins": 0
+      },
+      "origin_combo": "group:skills:⑤ 架构设计（底层词汇）"
+    },
+    {
+      "kind": "combo",
+      "id": "combo-dfa421d60d",
+      "name": "⑥ 环境配置（一次性初始化）",
+      "description": "技能分组：⑥ 环境配置（一次性初始化）（5 项能力）",
+      "version": "1.0.0",
+      "author": "Windy-X211",
+      "icon": "🎯",
+      "tags": [
+        "5 技能"
+      ],
+      "dir": "combos/combo-dfa421d60d",
+      "file": "combo.json",
+      "updated_at": "2026-11-09T21:41:23",
+      "source_kind": "group",
+      "member_count": 5,
+      "member_counts": {
+        "commands": 0,
+        "skills": 5,
+        "plugins": 0
+      },
+      "origin_combo": "group:skills:⑥ 环境配置（一次性初始化）"
     },
     {
       "kind": "plugin",
@@ -723,23 +847,6 @@
         "mindmap",
         "html",
         "layout"
-      ]
-    },
-    {
-      "kind": "plugin",
-      "id": "game_assistant",
-      "dir": "plugins/game_assistant",
-      "updated_at": "2026-11-08T12:52:52",
-      "version": "1.0.0",
-      "author": "q737843-source",
-      "name": "游戏助手",
-      "description": "⚠️ 免责声明（必读）⚠️\n本插件仅支持单机游戏！在联机游戏或多人游戏中使用本插件读取/修改存档\n（包括云存档、共享存档、房间存档等），可能导致存档损坏、数据回档、\n成绩失效、账号封禁等后果，一切后果由使用者自行承担。\n★ 是什么 ★\n游戏存档的读取与修改助手：告诉智能体游戏名和想改什么，它会自己找到存档、\n分析结构、按你的指令修改数据，并且每次修改前自动备份、随时可一键还原。\n★ 典型用法 ★\n1. 「扫描一下我电脑上的星露谷物语存档」→ 扫描 Documents / Saved Games /\n   AppData 等常见位置，列出存档文件；\n2. 「看看这个存档里我有多少钱」→ 智能解析存档（JSON 键树 / 文本 / 二进制\n   hexdump），定位数值字段；\n3. 「把金币改成 99999」→ 按字段精确修改（JSON）或文本/字节替换，\n   修改前自动备份，返回新旧值对比；\n4. 「改坏了，帮我恢复昨天的备份」→ listBackups + restore 一键还原。\n★ 支持的存档形态 ★\n1. JSON 存档：字段级精确修改（支持点分路径与数组下标）；\n2. 纯文本存档（cfg/ini/xml 等）：查找替换，支持正则；\n3. 二进制存档：hexdump 预览 + 可读字符串提取 + 等长字节替换\n   （数值需注意小端序，多处命中需显式确认）；\n4. zip 容器存档（如群星）：识别并给出提示，建议谨慎操作。\n★ 安全机制 ★\n1. 所有修改写盘前强制自动备份（集中存放，不污染游戏目录）；\n2. 备份日志完整可查（时间 / 来源 / 备份路径 / 备注）；\n3. 恢复前对当前文件再做一次安全备份；\n4. 超过 100MB 的文件拒绝处理；二进制替换强制等长。\n建议：修改前先关闭游戏（运行中的游戏可能在退出时用内存数据覆盖存档）。\n★ 环境要求 ★\nWindows，纯 Python 标准库，零第三方依赖。",
-      "icon": "🎮",
-      "tags": [
-        "game",
-        "save",
-        "savegame",
-        "single-player"
       ]
     }
   ]

@@ -1,0 +1,31 @@
+{
+  "name": "③ 编码实现（写码循环）",
+  "description": "技能分组：③ 编码实现（写码循环）（6 项能力）",
+  "members": [
+    {
+      "type": "skills",
+      "key": "implement"
+    },
+    {
+      "type": "skills",
+      "key": "implement-spec"
+    },
+    {
+      "type": "skills",
+      "key": "tdd"
+    },
+    {
+      "type": "skills",
+      "key": "prototype"
+    },
+    {
+      "type": "skills",
+      "key": "research"
+    },
+    {
+      "type": "skills",
+      "key": "diagnosing-bugs"
+    }
+  ],
+  "source_kind": "group"
+}

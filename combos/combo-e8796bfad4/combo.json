@@ -1,0 +1,19 @@
+{
+  "name": "⑤ 架构设计（底层词汇）",
+  "description": "技能分组：⑤ 架构设计（底层词汇）（3 项能力）",
+  "members": [
+    {
+      "type": "skills",
+      "key": "codebase-design"
+    },
+    {
+      "type": "skills",
+      "key": "domain-modeling"
+    },
+    {
+      "type": "skills",
+      "key": "improve-codebase-architecture"
+    }
+  ],
+  "source_kind": "group"
+}

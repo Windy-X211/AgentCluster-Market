@@ -1,0 +1,19 @@
+{
+  "name": "④ 审查收尾（审+PR+复盘）",
+  "description": "技能分组：④ 审查收尾（审+PR+复盘）（3 项能力）",
+  "members": [
+    {
+      "type": "skills",
+      "key": "code-review"
+    },
+    {
+      "type": "skills",
+      "key": "pr"
+    },
+    {
+      "type": "skills",
+      "key": "retro"
+    }
+  ],
+  "source_kind": "group"
+}
