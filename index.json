@@ -1,7 +1,30 @@
 {
   "version": "1.0",
-  "updated_at": "2026-11-09T21:41:23",
+  "updated_at": "2026-11-10T14:29:51",
   "items": [
+    {
+      "kind": "extension",
+      "id": "memory",
+      "dir": "extensions/memory",
+      "updated_at": "2026-11-10T14:29:51",
+      "version": "1.0.0",
+      "author": "Windy-X211",
+      "name": "长期记忆",
+      "description": "跨会话共享的长期记忆管理：手动/摘要两种模式，记忆条目与摘要自动注入智能体 prompt，配套 memory.read/write/delete 工具",
+      "icon": "🧠",
+      "tags": [
+        "memory",
+        "prompt-enhancement"
+      ],
+      "ext_type": "hybrid",
+      "source": "local",
+      "frontend_files": [],
+      "backend_entry": "backend",
+      "pages": [],
+      "config_page": "memory.html",
+      "system_prompt_file": "memory_prompt.md",
+      "viz_types": []
+    },
     {
       "kind": "combo",
       "id": "combo-d98667b203",

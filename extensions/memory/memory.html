@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🧠 记忆管理</title>
+<script src="https://unpkg.com/vue@3.4.27/dist/vue.global.prod.js"></script>
+<style>
+  :root {
+    --accent: #4f8cff;
+    --accent-bg: rgba(79, 140, 255, 0.12);
+    --border: rgba(255,255,255,0.1);
+    --bg: #1a1d23;
+    --bg2: #242830;
+    --text: #e0e4ec;
+    --text-dim: #9aa0ab;
+    --danger: #ff6b6b;
+    --warn: #ffbe46;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 16px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+    background: var(--bg); color: var(--text); font-size: 13px;
+  }
+  .panel { display: flex; flex-direction: column; gap: 12px; max-width: 900px; margin: 0 auto; }
+  .card {
+    background: var(--bg2); border: 1px solid var(--border);
+    border-radius: 10px; padding: 12px 14px;
+  }
+  .card h3 { margin: 0 0 8px 0; font-size: 14px; font-weight: 600; }
+  .row { display: flex; align-items: center; gap: 10px; }
+  .row.spaced { justify-content: space-between; }
+  .desc { font-size: 12px; color: var(--text-dim); line-height: 1.5; }
+  .title-row { display: flex; align-items: center; justify-content: space-between; }
+  .time { font-size: 11px; color: var(--text-dim); }
+
+  /* 开关 */
+  .switch { position: relative; width: 44px; height: 24px; cursor: pointer; flex-shrink: 0; }
+  .switch input { display: none; }
+  .slider {
+    position: absolute; inset: 0; border-radius: 12px;
+    background: rgba(255,255,255,0.15); transition: all .2s;
+  }
+  .slider::before {
+    content: ''; position: absolute; left: 3px; top: 3px;
+    width: 18px; height: 18px; border-radius: 50%;
+    background: #fff; transition: all .2s;
+  }
+  .switch.on .slider { background: var(--accent); }
+  .switch.on .slider::before { transform: translateX(20px); }
+
+  /* 按钮 */
+  button, .btn {
+    padding: 5px 12px; border-radius: 7px; border: 1px solid var(--border);
+    background: rgba(255,255,255,0.04); color: var(--text);
+    cursor: pointer; font-size: 12px; transition: all .15s;
+  }
+  button:hover:not(:disabled), .btn:hover:not(:disabled) {
+    background: rgba(255,255,255,0.1); border-color: var(--accent);
+  }
+  button.primary { background: var(--accent-bg); border-color: var(--accent); color: var(--accent); }
+  button.primary:hover:not(:disabled) { background: rgba(79,140,255,0.22); }
+  button.danger { border-color: rgba(255,107,107,0.4); color: var(--danger); }
+  button.danger:hover:not(:disabled) { background: rgba(255,107,107,0.1); }
+  button.small { padding: 3px 8px; font-size: 11px; }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+
+  /* 分段选择 */
+  .seg { display: flex; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
+  .seg button {
+    border: none; background: transparent; padding: 4px 10px; font-size: 11.5px;
+    color: var(--text-dim); border-right: 1px solid var(--border);
+  }
+  .seg button:last-child { border-right: none; }
+  .seg button.active { background: var(--accent-bg); color: var(--accent); }
+  .seg.disabled { opacity: .4; pointer-events: none; }
+
+  /* 记忆条目 */
+  .entry {
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 10px; border-radius: 7px; margin-bottom: 5px;
+    background: rgba(255,255,255,0.03); border: 1px solid var(--border);
+  }
+  .entry.pinned { border-color: rgba(255,190,70,0.35); background: rgba(255,190,70,0.06); }
+  .entry-content { flex: 1; min-width: 0; word-break: break-all; }
+  .entry-ts { font-size: 10.5px; color: var(--text-dim); flex-shrink: 0; }
+
+  /* 输入框 */
+  input[type="text"], textarea {
+    flex: 1; padding: 6px 10px; border-radius: 7px;
+    border: 1px solid var(--border); background: rgba(255,255,255,0.05);
+    color: var(--text); font-size: 12px; font-family: inherit;
+  }
+  input[type="text"]:focus, textarea:focus { outline: none; border-color: var(--accent); }
+  textarea { resize: vertical; min-height: 50px; line-height: 1.5; }
+
+  /* 智能体列表 */
+  .agent-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 10px; border-radius: 7px; margin-bottom: 5px;
+    background: rgba(255,255,255,0.03); border: 1px solid var(--border);
+  }
+  .agent-row input[type="checkbox"] { cursor: pointer; }
+  .avatar {
+    width: 24px; height: 24px; border-radius: 7px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; color: #fff; font-weight: 500;
+  }
+  .agent-name { flex: 1; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .agent-seg { flex-shrink: 0; }
+
+  .mode-desc { font-size: 11px; color: var(--text-dim); margin-top: 4px; line-height: 1.5; }
+  .empty { text-align: center; color: var(--text-dim); font-size: 11px; padding: 8px; }
+  .err { padding: 6px 10px; border-radius: 7px; background: rgba(255,107,107,0.12); color: var(--danger); font-size: 12px; }
+  .hint { text-align: center; opacity: .5; padding: 20px; font-size: 12px; }
+
+  /* 批量区域 */
+  .batch-tools { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+  .batch-tools label { font-size: 12px; cursor: pointer; }
+  .batch-btns { margin-left: auto; display: flex; gap: 6px; }
+  .batch-btns button { white-space: nowrap; }
+
+  .add-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+  .add-row label { font-size: 12px; color: var(--text-dim); white-space: nowrap; display: flex; align-items: center; gap: 4px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="panel">
+    <!-- 全局开关 -->
+    <div class="card">
+      <div class="row spaced">
+        <div>
+          <h3>🧠 记忆功能总开关</h3>
+          <div class="desc">关闭后所有智能体立即失去记忆能力（读写均不可用），已保存的记忆内容保留，重新开启即恢复。</div>
+        </div>
+        <label class="switch" :class="{ on: globalEnabled }">
+          <input type="checkbox" :checked="globalEnabled" :disabled="busy" @change="toggleGlobal">
+          <span class="slider"></span>
+        </label>
+      </div>
+    </div>
+
+    <!-- 记忆内容 -->
+    <div class="card">
+      <div class="title-row">
+        <h3>记忆内容（所有智能体共用）</h3>
+        <div>
+          <button class="btn small" :disabled="busy" @click="clearMem(true)">清空摘要与普通</button>
+          <button class="btn small danger" :disabled="busy" @click="clearMem(false)">清空全部</button>
+        </div>
+      </div>
+      <div class="time" v-if="shared.updated_at">更新于 {{ formatTime(shared.updated_at) }}</div>
+
+      <template v-if="!sharedLoading">
+        <!-- 固定记忆 -->
+        <div style="margin-top: 8px;">
+          <div class="desc" style="margin-bottom: 4px;">📌 固定记忆（用户主动要求记住，永不遗忘）</div>
+          <div v-if="!shared.pinned_entries.length" class="empty">暂无固定记忆</div>
+          <div v-for="e in shared.pinned_entries" :key="e.id" class="entry pinned">
+            <span class="entry-content">{{ e.content }}</span>
+            <span class="entry-ts">{{ formatTime(e.ts) }}</span>
+            <button class="btn small" :disabled="busy" @click="togglePin(e)">取消固定</button>
+            <button class="btn small danger" :disabled="busy" @click="delEntry(e)">删除</button>
+          </div>
+        </div>
+
+        <!-- 摘要记忆 -->
+        <div style="margin-top: 12px;">
+          <div class="desc" style="margin-bottom: 4px;">📝 摘要记忆（系统自动整理）</div>
+          <textarea v-model="summaryDraft" placeholder="暂无摘要" @input="summaryDirty = true"
+                    style="width: 100%; min-height: 180px; resize: vertical; line-height: 1.6;"></textarea>
+          <div style="text-align: right; margin-top: 4px;">
+            <button class="btn small primary" :disabled="busy || !summaryDirty" @click="saveSummary">保存摘要</button>
+          </div>
+        </div>
+
+        <!-- 其他条目 -->
+        <div style="margin-top: 12px;">
+          <div class="desc" style="margin-bottom: 4px;">🗂 其他记忆（{{ shared.other_entries.length }}）</div>
+          <div v-if="!shared.other_entries.length" class="empty">暂无</div>
+          <div v-for="e in shared.other_entries" :key="e.id" class="entry">
+            <span class="entry-content">{{ e.content }}</span>
+            <span class="entry-ts">{{ formatTime(e.ts) }}</span>
+            <button class="btn small" :disabled="busy" @click="togglePin(e)">固定</button>
+            <button class="btn small danger" :disabled="busy" @click="delEntry(e)">删除</button>
+          </div>
+        </div>
+
+        <!-- 添加 -->
+        <div class="add-row">
+          <input type="text" v-model="newEntryText" placeholder="输入要记入记忆的内容…" @keyup.enter="addEntry">
+          <label><input type="checkbox" v-model="newEntryPinned"> 固定</label>
+          <button class="btn primary" :disabled="busy || !newEntryText.trim()" @click="addEntry">添加</button>
+        </div>
+      </template>
+      <div v-else class="hint">加载中…</div>
+    </div>
+
+    <!-- 智能体模式 -->
+    <div class="card">
+      <div class="batch-tools">
+        <label><input type="checkbox" :checked="allChecked" @change="toggleAll"> 全选（{{ selected.size }}/{{ rows.length }}）</label>
+        <div class="batch-btns">
+          <button class="small" :disabled="!hasSelection || busy" @click="batchApply('summary')">批量开启摘要</button>
+          <button class="small" :disabled="!hasSelection || busy" @click="batchApply('manual')">批量开启手动</button>
+          <button class="small danger" :disabled="!hasSelection || busy" @click="batchApply('off')">批量关闭</button>
+        </div>
+      </div>
+
+      <div v-if="!loading && !rows.length" class="hint">还没有任何智能体</div>
+      <div v-else-if="loading" class="hint">加载中…</div>
+      <div v-for="row in rows" :key="row.agent_id" class="agent-row">
+        <input type="checkbox" :checked="selected.has(row.agent_id)" @change="toggleChecked(row)">
+        <span class="avatar" :style="{ background: row.avatar_color || '#4f8cff' }">{{ (row.name || '?').slice(0,1) }}</span>
+        <span class="agent-name" :title="row.name">{{ row.name }}</span>
+        <div class="seg agent-seg" :class="{ disabled: !globalEnabled || busy }">
+          <button :class="{ active: row.configured_mode === 'off' }" @click="setMode(row, 'off')">关闭</button>
+          <button :class="{ active: row.configured_mode === 'manual' }" @click="setMode(row, 'manual')">手动</button>
+          <button :class="{ active: row.configured_mode === 'summary' }" @click="setMode(row, 'summary')">摘要</button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="err" class="err">⚠️ {{ err }}</div>
+  </div>
+</div>
+
+<script>
+const { createApp, ref, computed, onMounted } = Vue;
+
+const API_BASE = (() => {
+  const parts = window.location.origin.split(':');
+  if (parts[1] === '8870') return window.location.origin + '/api/ext/memory';
+  // 尝试标准后端地址
+  return 'http://127.0.0.1:8870/api/ext/memory';
+})();
+
+async function req(path, opts = {}) {
+  const r = await fetch(API_BASE + path, {
+    headers: { 'Content-Type': 'application/json' },
+    ...opts,
+  });
+  if (!r.ok) {
+    let detail = r.statusText;
+    try { const j = await r.json(); detail = j.detail || j.message || detail; } catch(e) {}
+    throw new Error(`${r.status} ${detail}`);
+  }
+  return r.json();
+}
+
+createApp({
+  setup() {
+    const rows = ref([]);
+    const loading = ref(true);
+    const globalEnabled = ref(true);
+    const selected = ref(new Set());
+    const shared = ref({ summary_text: '', pinned_entries: [], other_entries: [] });
+    const sharedLoading = ref(true);
+    const summaryDraft = ref('');
+    const summaryDirty = ref(false);
+    const newEntryText = ref('');
+    const newEntryPinned = ref(false);
+    const busy = ref(false);
+    const err = ref('');
+
+    const hasSelection = computed(() => selected.value.size > 0);
+    const allChecked = computed(() => rows.value.length > 0 && selected.value.size === rows.value.length);
+
+    function formatTime(ts) {
+      if (!ts) return '';
+      try { return ts.slice(0, 16).replace('T', ' '); } catch { return ''; }
+    }
+
+    async function loadShared() {
+      sharedLoading.value = true;
+      try {
+        const d = await req('/shared');
+        shared.value = d;
+        summaryDraft.value = d.summary_text || '';
+        summaryDirty.value = false;
+      } catch (e) { err.value = e.message; }
+      finally { sharedLoading.value = false; }
+    }
+
+    async function refresh() {
+      err.value = '';
+      try {
+        rows.value = await req('/overview');
+        if (rows.value.length) globalEnabled.value = rows.value[0].global_enabled !== false;
+        const ids = new Set(rows.value.map(r => r.agent_id));
+        for (const sid of [...selected.value]) if (!ids.has(sid)) selected.value.delete(sid);
+        await loadShared();
+      } catch (e) { err.value = e.message; }
+      finally { loading.value = false; }
+    }
+
+    async function toggleGlobal() {
+      busy.value = true;
+      try {
+        await req('/global', { method: 'PUT', body: JSON.stringify({ enabled: !globalEnabled.value }) });
+        await refresh();
+      } catch (e) { err.value = e.message; }
+      finally { busy.value = false; }
+    }
+
+    async function setMode(row, mode) {
+      busy.value = true;
+      try { await req('/' + row.agent_id + '/mode', { method: 'PUT', body: JSON.stringify({ mode }) }); await refresh(); }
+      catch (e) { err.value = e.message; }
+      finally { busy.value = false; }
+    }
+
+    function toggleChecked(row) {
+      const s = new Set(selected.value);
+      if (s.has(row.agent_id)) s.delete(row.agent_id); else s.add(row.agent_id);
+      selected.value = s;
+    }
+
+    function toggleAll() {
+      if (allChecked.value) selected.value = new Set();
+      else selected.value = new Set(rows.value.map(r => r.agent_id));
+    }
+
+    async function batchApply(mode) {
+      busy.value = true;
+      try {
+        await req('/batch', { method: 'POST', body: JSON.stringify({ agent_ids: [...selected.value], mode }) });
+        await refresh();
+      } catch (e) { err.value = e.message; }
+      finally { busy.value = false; }
+    }
+
+    async function addEntry() {
+      if (!newEntryText.value.trim() || busy.value) return;
+      busy.value = true;
+      try {
+        await req('/entries', { method: 'POST', body: JSON.stringify({ content: newEntryText.value.trim(), pinned: newEntryPinned.value }) });
+        newEntryText.value = ''; newEntryPinned.value = false;
+        await refresh();
+      } catch (e) { err.value = e.message; }
+      finally { busy.value = false; }
+    }
+
+    async function delEntry(e) {
+      if (busy.value) return;
+      if (!confirm('删除这条记忆？' + (e.pinned ? '（固定记忆）' : ''))) return;
+      busy.value = true;
+      try { await req('/entries/' + e.id, { method: 'DELETE' }); await refresh(); }
+      catch (ex) { err.value = ex.message; }
+      finally { busy.value = false; }
+    }
+
+    async function togglePin(e) {
+      if (busy.value) return;
+      busy.value = true;
+      try {
+        await req('/entries/' + e.id, { method: 'PUT', body: JSON.stringify({ pinned: !e.pinned }) });
+        await refresh();
+      } catch (ex) { err.value = ex.message; }
+      finally { busy.value = false; }
+    }
+
+    async function saveSummary() {
+      if (busy.value) return;
+      busy.value = true;
+      try { await req('/summary', { method: 'PUT', body: JSON.stringify({ content: summaryDraft.value }) }); await refresh(); }
+      catch (e) { err.value = e.message; }
+      finally { busy.value = false; }
+    }
+
+    async function clearMem(keepPinned) {
+      if (busy.value) return;
+      const msg = keepPinned ? '清空摘要记忆与普通记忆条目？（固定记忆保留）' : '清空全部记忆（含固定记忆），不可恢复？';
+      if (!confirm(msg)) return;
+      busy.value = true;
+      try { await req('/clear', { method: 'POST', body: JSON.stringify({ keep_pinned: keepPinned }) }); await refresh(); }
+      catch (e) { err.value = e.message; }
+      finally { busy.value = false; }
+    }
+
+    onMounted(refresh);
+
+    return {
+      rows, loading, globalEnabled, selected, shared, sharedLoading,
+      summaryDraft, summaryDirty, newEntryText, newEntryPinned, busy, err,
+      hasSelection, allChecked, formatTime,
+      toggleGlobal, setMode, toggleChecked, toggleAll, batchApply,
+      addEntry, delEntry, togglePin, saveSummary, clearMem,
+    };
+  }
+}).mount('#app');
+</script>
+</body>
+</html>

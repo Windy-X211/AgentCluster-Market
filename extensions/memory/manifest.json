@@ -1,0 +1,14 @@
+{
+  "id": "memory",
+  "name": "长期记忆",
+  "version": "1.0.0",
+  "type": "hybrid",
+  "author": "AgentCluster",
+  "description": "跨会话共享的长期记忆管理：手动/摘要两种模式，记忆条目与摘要自动注入智能体 prompt，配套 memory.read/write/delete 工具",
+  "icon": "🧠",
+  "tags": ["memory", "prompt-enhancement"],
+  "frontend_files": [],
+  "backend_entry": "backend",
+  "system_prompt_file": "memory_prompt.md",
+  "config_page": "memory.html"
+}
