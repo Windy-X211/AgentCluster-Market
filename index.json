@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "updated_at": "2026-11-10T14:29:51",
+  "updated_at": "2026-11-10T17:30:19",
   "items": [
     {
       "kind": "extension",
@@ -460,23 +460,6 @@
       "file": "agent.json",
       "updated_at": "2026-11-06T22:43:49",
       "origin_agent_id": 41
-    },
-    {
-      "kind": "agent",
-      "id": "agent-38",
-      "name": "背景生成师",
-      "description": "按规范生成界面背景（动画/视频/图片）",
-      "version": "1.0.0",
-      "author": "Windy-X211",
-      "icon": "🤖",
-      "tags": [
-        "系统",
-        "背景生成"
-      ],
-      "dir": "agents/agent-38",
-      "file": "agent.json",
-      "updated_at": "2026-11-06T22:43:49",
-      "origin_agent_id": 38
     },
     {
       "kind": "agent",
