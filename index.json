@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "updated_at": "2026-11-10T17:30:19",
+  "updated_at": "2026-11-10T17:30:36",
   "items": [
     {
       "kind": "extension",
@@ -460,23 +460,6 @@
       "file": "agent.json",
       "updated_at": "2026-11-06T22:43:49",
       "origin_agent_id": 41
-    },
-    {
-      "kind": "agent",
-      "id": "agent-27",
-      "name": "能力生成师",
-      "description": "按 AgentCluster 规范生成技能与插件",
-      "version": "1.0.0",
-      "author": "Windy-X211",
-      "icon": "🤖",
-      "tags": [
-        "系统",
-        "能力生成"
-      ],
-      "dir": "agents/agent-27",
-      "file": "agent.json",
-      "updated_at": "2026-11-06T22:43:49",
-      "origin_agent_id": 27
     },
     {
       "kind": "plugin",
