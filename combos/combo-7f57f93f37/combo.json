@@ -1,0 +1,31 @@
+{
+  "name": "音乐创作",
+  "description": "",
+  "members": [
+    {
+      "type": "skills",
+      "key": "anyaudio-clipbay"
+    },
+    {
+      "type": "skills",
+      "key": "anyaudio-scoring"
+    },
+    {
+      "type": "plugins",
+      "key": "anyaudio_music"
+    },
+    {
+      "type": "plugins",
+      "key": "anyaudio_project"
+    },
+    {
+      "type": "plugins",
+      "key": "anyaudio_sfx"
+    },
+    {
+      "type": "plugins",
+      "key": "anyaudio_tts"
+    }
+  ],
+  "source_kind": "combo"
+}

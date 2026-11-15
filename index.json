@@ -1,7 +1,31 @@
 {
   "version": "1.0",
-  "updated_at": "2026-11-10T17:31:17",
+  "updated_at": "2026-11-15T20:25:44",
   "items": [
+    {
+      "kind": "combo",
+      "id": "combo-7f57f93f37",
+      "name": "音乐创作",
+      "description": "",
+      "version": "1.0.0",
+      "author": "Windy-X211",
+      "icon": "🎯",
+      "tags": [
+        "2 技能",
+        "4 插件"
+      ],
+      "dir": "combos/combo-7f57f93f37",
+      "file": "combo.json",
+      "updated_at": "2026-11-15T20:25:44",
+      "source_kind": "combo",
+      "member_count": 6,
+      "member_counts": {
+        "commands": 0,
+        "skills": 2,
+        "plugins": 4
+      },
+      "origin_combo": "音乐创作"
+    },
     {
       "kind": "agent",
       "id": "agent-27",
