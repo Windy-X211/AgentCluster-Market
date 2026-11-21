@@ -1,0 +1,10 @@
+{
+  "id": "bg_1795228365_75e0b8",
+  "name": "snake",
+  "type": "animation",
+  "entry": "snake.html",
+  "description": "",
+  "preview": "radial-gradient(circle at 50% 40%, #080808 0%, #000000 70%)",
+  "opacity": 1.0,
+  "builtin": false
+}
