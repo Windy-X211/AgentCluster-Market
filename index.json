@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "updated_at": "2026-11-21T11:30:12",
+  "updated_at": "2026-11-21T17:13:45",
   "items": [
     {
       "kind": "background",
@@ -911,6 +911,24 @@
         "mindmap",
         "html",
         "layout"
+      ]
+    },
+    {
+      "kind": "plugin",
+      "id": "comfy_ui",
+      "dir": "plugins/comfy_ui",
+      "updated_at": "2026-11-21T17:13:45",
+      "version": "1.0.0",
+      "author": "q737843-source",
+      "name": "ComfyUI 生图",
+      "description": "连接本地或远程 ComfyUI（默认 http://127.0.0.1:8188）生成图片，服务未运行时自动拉起。\n\n★ 核心能力 ★\n1. 已有画布生图：默认在 ComfyUI 界面正在编辑的画布中导入正向/反向提示词并执行\n   （画布来源优先级：界面草稿 > 最近执行历史 > 内置模板，全自动降级）；\n2. 智能体绘制画布：无可用画布或你要求搭建时，智能体可从零绘制 Comfy 画布——\n   内置文生图模板一键成图，或自由构造任意节点图，保存后可在 ComfyUI 网页界面打开；\n3. 参数覆盖：模型 / LoRA / 步数 / CFG / 采样器 / 尺寸 / 种子（画布无对应节点时自动说明）；\n4. 节点查询：查询任意 ComfyUI 节点的参数定义与可选值（自由构建画布前用）；\n5. 队列管理：查看队列、中断执行。\n\n★ 调用约定 ★\n调用前应先由语言模型把用户需求扩写成完整英文提示词（含画质词/风格/构图），\n再填入 prompt / negative_prompt 参数；不传则保留画布原有提示词。\n\n★ 环境要求 ★\n任意位置部署均可：服务器地址与启动命令在插件目录 config.json 修改\n（base_url / launch_command / auto_launch）。",
+      "icon": "🖌️",
+      "tags": [
+        "comfyui",
+        "image",
+        "txt2img",
+        "workflow",
+        "local"
       ]
     }
   ]

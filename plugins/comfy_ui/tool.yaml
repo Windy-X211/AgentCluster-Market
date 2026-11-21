@@ -1,0 +1,137 @@
+identity:
+  name: "comfy_ui"
+  author: "q737843-source"
+version: "1.0.0"
+
+description:
+  zh_Hans: |
+    ComfyUI 生图：连接本地/远程 ComfyUI 服务生图。默认在「已有画布」中导入正向/反向提示词并执行；
+    画布来源优先级：界面正在编辑的草稿 > 最近执行历史 > 内置文生图模板。
+
+    典型用法：
+    - 生图：action=generate, prompt=..., negativePrompt=...（自动复用已有画布；可用 steps/cfg/width/height/seed 等覆盖参数）
+    - 查看已有画布结构：action=inspectWorkflow（返回节点列表与正/负提示词节点位置）
+    - 列出可用画布：action=listWorkflows
+    - 搭建/绘制画布：action=drawCanvas —— 传 workflowJson（API 格式节点图）为自由构建，否则用内置模板；
+      saveName 可把画布保存到 ComfyUI 服务端（用户能在网页界面打开）；run 默认 true 立即出图。
+      自由构建前可用 action=nodeInfo 查询节点定义（nodeType=节点名 或 keyword=关键词）。
+    - 队列/中断：action=queue / action=interrupt
+    - 连接状态：action=status
+
+    注意：
+    - 提示词注入方式：定位采样器（KSampler 等）positive/negative 连接链上的 CLIPTextEncode 节点并替换 text。
+    - prompt/negativePrompt 不传则保留画布原有提示词；randomizeSeed 默认 true（每次随机种子），传 seed 可固定。
+    - 画布无对应节点时覆盖参数会被忽略并在 overridesIgnored 中说明。
+    - 服务器默认 http://127.0.0.1:8188，未运行时自动启动；地址与启动命令在插件目录 config.json 修改以支持任意位置。
+  en_US: |
+    ComfyUI image generation via a local or remote server. By default it imports
+    positive/negative prompts into an existing canvas (UI draft > recent history >
+    built-in template) and runs it. Use drawCanvas to build a canvas from scratch
+    (template or free-form node graph via workflowJson, savable into the ComfyUI UI).
+    Query node schemas with nodeInfo before free-form building.
+
+parameters:
+  - name: "action"
+    type: "string"
+    required: true
+    description: "操作类型"
+    enum: ["status", "generate", "listWorkflows", "inspectWorkflow", "drawCanvas", "nodeInfo", "queue", "interrupt"]
+  - name: "prompt"
+    type: "string"
+    description: "正向提示词（generate/drawCanvas 用；不传则保留画布原有正向提示词）"
+  - name: "negativePrompt"
+    type: "string"
+    description: "反向提示词（不传则保留画布原有；画布无负向节点时自动跳过）"
+  - name: "workflowSource"
+    type: "string"
+    description: "画布来源：auto=自动（草稿>历史>模板，默认）；draft=界面正在编辑/已保存的草稿；history=最近执行历史；template=内置文生图模板；file=本地工作流文件（需 filePath）"
+    enum: ["auto", "draft", "history", "template", "file"]
+    default: "auto"
+  - name: "workflowName"
+    type: "string"
+    description: "draft 源的工作流名（ComfyUI 服务端保存的工作流文件名，如 Unsaved Workflow.json；不传取界面当前草稿）"
+  - name: "historyId"
+    type: "string"
+    description: "history 源的执行条目 prompt_id（不传取最近一次执行成功的工作流）"
+  - name: "filePath"
+    type: "string"
+    description: "本地工作流 JSON 文件路径（workflowSource=file 或 drawCanvas 自定义画布；UI 格式与 API 格式自动识别）"
+  - name: "workflowJson"
+    type: "string"
+    description: "drawCanvas 自由构建：API 格式工作流 JSON 字符串，形如 {\"1\":{\"class_type\":\"KSampler\",\"inputs\":{...}}}；构建前可用 nodeInfo 查节点参数"
+  - name: "saveName"
+    type: "string"
+    description: "drawCanvas 保存画布到 ComfyUI 服务端的名称（保存后用户可在网页界面左侧工作流菜单打开；.json 后缀可省略）"
+  - name: "run"
+    type: "boolean"
+    description: "drawCanvas 构建后是否立即执行出图（默认 true）"
+    default: true
+  - name: "checkpoint"
+    type: "string"
+    description: "覆盖画布中的大模型（CheckpointLoaderSimple 的 ckpt_name；模板模式用其选择 checkpoint）"
+  - name: "unet"
+    type: "string"
+    description: "覆盖/选择 UNet 模型（UNETLoader 的 unet_name，三件套画布用）"
+  - name: "clip"
+    type: "string"
+    description: "覆盖/选择文本编码器（CLIPLoader 的 clip_name）"
+  - name: "vae"
+    type: "string"
+    description: "覆盖/选择 VAE（VAELoader 的 vae_name）"
+  - name: "lora"
+    type: "string"
+    description: "覆盖画布中已有 LoRA 加载节点的 lora_name（画布无 LoRA 节点时会被忽略；模板模式会插入 LoRA 节点）"
+  - name: "loraStrength"
+    type: "number"
+    description: "LoRA 强度（默认 1.0）"
+  - name: "steps"
+    type: "number"
+    description: "覆盖采样步数（KSampler 的 steps；turbo LoRA 建议 6-10）"
+  - name: "cfg"
+    type: "number"
+    description: "覆盖 CFG（KSampler 的 cfg；turbo LoRA 建议 4）"
+  - name: "sampler"
+    type: "string"
+    description: "覆盖采样器（KSampler 的 sampler_name，如 euler）"
+  - name: "scheduler"
+    type: "string"
+    description: "覆盖调度器（KSampler 的 scheduler，如 simple/normal）"
+  - name: "denoise"
+    type: "number"
+    description: "覆盖去噪强度（KSampler 的 denoise，文生图通常 1.0）"
+  - name: "width"
+    type: "number"
+    description: "覆盖生成宽度（EmptyLatent 系节点）"
+  - name: "height"
+    type: "number"
+    description: "覆盖生成高度（EmptyLatent 系节点）"
+  - name: "batchSize"
+    type: "number"
+    description: "覆盖单次生成张数（EmptyLatent 系节点的 batch_size）"
+  - name: "seed"
+    type: "number"
+    description: "固定种子（不传则 randomizeSeed=true 时随机）"
+  - name: "randomizeSeed"
+    type: "boolean"
+    description: "是否随机种子（默认 true；传 seed 时忽略此参数）"
+    default: true
+  - name: "timeout"
+    type: "number"
+    description: "等待执行完成的超时秒数（默认 600）"
+    default: 600
+  - name: "nodeType"
+    type: "string"
+    description: "nodeInfo：精确节点类型名（如 KSampler），返回其参数定义/默认值/可选值"
+  - name: "keyword"
+    type: "string"
+    description: "nodeInfo：按关键词搜索节点名（如 lora、sampler）"
+  - name: "autoLaunch"
+    type: "boolean"
+    description: "ComfyUI 未运行时是否自动启动（默认按 config.json 的 auto_launch，当前默认开启）"
+  - name: "base_url"
+    type: "string"
+    description: "ComfyUI 服务地址（默认 http://127.0.0.1:8188；也可在插件目录 config.json 配置）"
+    default: "http://127.0.0.1:8188"
+  - name: "save_dir"
+    type: "string"
+    description: "图片保存目录（默认 outputs/comfy_ui，相对路径位于主项目根下）"

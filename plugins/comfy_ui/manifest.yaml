@@ -1,0 +1,29 @@
+# comfy_ui 插件 —— ComfyUI 生图（连接本地/任意位置 ComfyUI）
+
+version: "1.0.0"
+type: "plugin"
+name: "comfy_ui"
+label:
+  zh_Hans: "ComfyUI 生图"
+  en_US: "ComfyUI Image Generation"
+author: "q737843-source"
+description:
+  zh_Hans: |
+    连接本地或任意位置的 ComfyUI 服务生图。默认在「已有画布」中导入正向/反向提示词并执行：
+    画布来源优先级为 界面正在编辑的草稿 > 最近执行历史 > 内置文生图模板。
+    无可用画布、或用户明确要求搭建/绘制画布时，智能体可从零绘制 Comfy 画布
+    （内置动态文生图模板，或自由构造任意节点图，保存后可在 ComfyUI 界面中打开查看）。
+    支持参数覆盖（模型/LoRA/步数/CFG/采样器/尺寸/种子等）、ComfyUI 未运行时自动启动、
+    节点定义查询（object_info）、队列管理与中断。
+    服务器地址与启动命令可在插件目录 config.json 中修改，以支持任意位置的 ComfyUI 部署。
+  en_US: |
+    Connect to a local or remote ComfyUI server for image generation. By default it
+    imports positive/negative prompts into an existing canvas (draft being edited in
+    the UI > recent execution history > built-in txt2img template) and runs it. When
+    no canvas is available or the user asks to build one, the agent can draw a Comfy
+    canvas from scratch (built-in dynamic template or free-form node graph, savable
+    and openable in the ComfyUI UI). Supports parameter overrides, auto-launch,
+    node schema queries, queue management and interrupt.
+version_code: 1
+icon: "🖌️"
+tags: ["comfyui", "image-generation", "text-to-image", "workflow", "local", "stable-diffusion"]

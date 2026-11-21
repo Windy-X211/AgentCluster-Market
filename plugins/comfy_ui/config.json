@@ -1,0 +1,7 @@
+{
+  "base_url": "http://127.0.0.1:8188",
+  "launch_command": "",
+  "auto_launch": true,
+  "output_dir": "outputs/comfy_ui",
+  "wait_timeout": 600
+}
