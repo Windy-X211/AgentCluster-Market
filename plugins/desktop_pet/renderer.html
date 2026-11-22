@@ -22,18 +22,52 @@
     }
   </style>
   <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
-  <script src="https://unpkg.com/pixi.js@6.5.10/dist/browser/pixi.min.js"></script>
-  <script src="https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/pixi-live2d-display@0.4.0/dist/cubism4.min.js"></script>
+  <!-- 三个渲染库改成本地文件（assets/_libs），不依赖外网 CDN：
+       断网/代理慢时页面会卡在第一个外链脚本上，脚本不执行 → canvas 不创建 → 白屏。 -->
+  <script src="assets/_libs/pixi-6.5.10.min.js"></script>
+  <script src="assets/_libs/live2dcubismcore.min.js"></script>
+  <script src="assets/_libs/pixi-live2d-display-0.4.0-cubism4.min.js"></script>
+  <!-- 命令入口占位：本页脚本尚未执行到定义处时，Python 侧投递的命令先落到空函数。
+       否则每次新建渲染页都会刷几十条 "setPetCommand is not defined"，既污染日志也拖慢主线程。 -->
+  <script>window.setPetCommand = window.setPetCommand || function () {};</script>
 </head>
 
 <body>
   <script>
     // ============ QWebChannel 桥 ============
     window.bridge = null;
-    new QWebChannel(qt.webChannelTransport, function (channel) {
-      window.bridge = channel.objects.bridge;
-    });
+    if (typeof QWebChannel !== 'undefined' && typeof qt !== 'undefined') {
+      new QWebChannel(qt.webChannelTransport, function (channel) {
+        window.bridge = channel.objects.bridge;
+      });
+    }
+
+    // ============ pixi-live2d 运行时诊断（只输出 console，不修改任何库配置）============
+    // 重要：**不修改 PIXI.live2d.config**——第三方库内部配置（如 useRegister/maxTextureSize）
+    // 在不同库版本/电脑上不一定存在，修改它既不适用其他人也不稳定。
+    // 这里仅做诊断：把运行时 MAX_TEXTURE_SIZE 和默认配置打印到 console，方便定位错乱模型特征。
+    function _diagnoseConfig(model3Url, pixiApp) {
+      // 从 WebGL 拿 GPU 能力
+      var maxTex = 8192;
+      try {
+        var gl = pixiApp.renderer.gl;
+        if (gl) maxTex = gl.getParameter(gl.MAX_TEXTURE_SIZE) || 8192;
+      } catch (e) { }
+      console.log('[Live2D Diagnose] MAX_TEXTURE_SIZE from WebGL:', maxTex);
+
+      console.log('[Live2D Diagnose] model3.json URL:', model3Url);
+      // pixi-live2d 默认 config 快照（只读不改）
+      try {
+        var cfg = window.PIXI.live2d.config;
+        console.log('[Live2D Diagnose] default PIXI.live2d.config:', JSON.stringify({
+          useRegister: cfg.useRegister,
+          maxTextureSize: cfg.maxTextureSize,
+          autoInteract: cfg.autoInteract,
+          sound: cfg.sound,
+          motionSync: cfg.motionSync
+        }));
+      } catch (e) { }
+    }
 
     // ============ 全局状态 ============
     var model = null;
@@ -41,39 +75,662 @@
     var fitScale = 1.0;       // 模型适配画布的基础缩放（画布尺寸变化时重算）
     var modelBaseW = 0, modelBaseH = 0;   // 模型原始（未缩放）尺寸，避免重复缩放
     var targetW = 0, targetH = 0;
+    // === 全屏 Stage 架构 ===
+    // Electron 窗口固定覆盖整块显示器；模型画在自己的 Stage 里，
+    // ClipBox 决定动画里全屏黑贴图是否被裁掉（local=只看 Stage，full=整屏）。
+    var _layoutStage = { x: 0, y: 0, w: window.innerWidth, h: window.innerHeight };
+    var _layoutClip = { x: 0, y: 0, w: window.innerWidth, h: window.innerHeight };
+    var _layoutMode = 'local';
+    var _layoutSeq = -1;
+    function _winOrigin() {
+      return { x: (typeof window.screenX === 'number') ? window.screenX : 0,
+               y: (typeof window.screenY === 'number') ? window.screenY : 0 };
+    }
+    // Stage 的屏幕坐标（Python 的 stage_rect() 与之同一套坐标系）
+    function _stageScreenRect() {
+      var st = _layoutStage;
+      return [Math.round(st.x), Math.round(st.y),
+              Math.round(Math.max(1, st.w)), Math.round(Math.max(1, st.h))];
+    }
+    function _layoutStageLocal() {
+      var o = _winOrigin();
+      return { x: _layoutStage.x - o.x, y: _layoutStage.y - o.y,
+               w: Math.max(1, _layoutStage.w), h: Math.max(1, _layoutStage.h) };
+    }
+    function _layoutClipLocal() {
+      if (_layoutMode === 'full') {
+        return { x: 0, y: 0, w: window.innerWidth, h: window.innerHeight };
+      }
+      var o = _winOrigin();
+      return { x: _layoutClip.x - o.x, y: _layoutClip.y - o.y,
+               w: Math.max(1, _layoutClip.w), h: Math.max(1, _layoutClip.h) };
+    }
+    function _parseRect(v, fallback) {
+      if (Array.isArray(v) && v.length === 4) {
+        return { x: Number(v[0]), y: Number(v[1]), w: Number(v[2]), h: Number(v[3]) };
+      }
+      if (typeof v === 'string' && v.trim()) {
+        var p = v.split(',').map(function (s) { return Number(s.trim()); });
+        if (p.length === 4 && p.every(function (n) { return isFinite(n); })) {
+          return { x: p[0], y: p[1], w: p[2], h: p[3] };
+        }
+      }
+      return fallback;
+    }
+    // 画面延迟统计：Python 下发布局时带墙钟 t，这里在真正应用时回算
+    // "下发→应用"的差值 = 光标移动后画面追上来的延迟（诊断用，只记数字不打印）。
+    var _lagStat = window.__lagStat = { n: 0, sum: 0, max: 0, last: 0, n_old: 0 };
+    function _applyPetLayout(data) {
+      if (!data) return false;
+      var seq = Number(data.seq);
+      if (isFinite(seq) && seq >= 0) {
+        if (seq < _layoutSeq) { _lagStat.n_old++; return false; }   // 旧布局迟到，丢弃
+        _layoutSeq = seq;
+      }
+      _layoutStage = _parseRect(data.stage, _layoutStage);
+      _layoutMode = (data.mode === 'full') ? 'full' : 'local';
+      _layoutClip = _parseRect(data.clip,
+        (_layoutMode === 'full')
+          ? { x: 0, y: 0, w: window.innerWidth, h: window.innerHeight }
+          : _layoutStage);
+      _applyCanvasClip();
+      _invalidateHitFrame();
+      if (model && app) applyFit();
+      // 拖拽惯性：把 Stage 位移喂给摆动器（拖动 / 命令位移都会走这里）
+      try { _swayFeed(_layoutStage.x, _layoutStage.y); } catch (e) { }
+      try {
+        var _t0 = Number(data.t);
+        if (isFinite(_t0) && _t0 > 0) {
+          var _lg = Date.now() - _t0;
+          if (_lg >= 0 && _lg < 5000) {
+            _lagStat.n++; _lagStat.sum += _lg; _lagStat.last = _lg;
+            if (_lg > _lagStat.max) _lagStat.max = _lg;
+          }
+        }
+      } catch (e) { }
+      return true;
+    }
+    function _applyCanvasClip() {
+      if (!app || !app.view) return;
+      if (_layoutMode === 'full') {
+        app.view.style.clipPath = 'none';
+        return;
+      }
+      var c = _layoutClipLocal();
+      var left = Math.max(0, c.x);
+      var top = Math.max(0, c.y);
+      var right = Math.max(0, window.innerWidth - (c.x + c.w));
+      var bottom = Math.max(0, window.innerHeight - (c.y + c.h));
+      app.view.style.clipPath = 'inset(' + top + 'px ' + right + 'px ' +
+                                bottom + 'px ' + left + 'px)';
+    }
+    window.__applyPetLayout = _applyPetLayout;
     var _suspendedFrames = false;   // true=画布分辨率调整中，暂停帧推送（避免空白帧闪动）
+    var _glLost = false;            // true=WebGL 上下文已丢失（此状态下的画面必须重建）
+    var _intentionalLost = false;   // true=我们自己主动丢上下文（切换重建中，不算故障）
+    var _GL_REBUILD_MAX = 2;        // 连续重建上限，防止上下文反复丢失时无限刷新
+    var _switchSeq = 0;             // 模型切换序号：丢弃过期加载结果，避免并发切换互相覆盖
+    var _switchBusy = false;        // true=模型切换中，暂停帧推送（避免空白/残帧闪动）
+    var _modelJsonUrl = "";         // 当前模型 model3.json 的 URL（资产元数据来源）
+    var _modelReady = false;        // 当前模型是否已加载完成（getAssets/model_ready）
+    var _lastSwitchError = "";      // 最近一次模型加载/切换的错误信息（诊断用）
+    var _hiddenParts = [];          // 运行时隐藏的部件 [{id, index}]（兼容旧命令）
+    var _hiddenDrawables = [];      // 运行时隐藏的单个网格（drawable 索引），优先使用
+    var _highlightGfx = null;       // 选中部件的轮廓高亮（PIXI.Graphics）
+    var _highlight = { active: false, partIndex: -1, drawableIndex: -1 };
+    // 同一像素上重叠多个网格时，靠「同位置重复点击」在它们之间循环
+    var _pickCycle = { sx: -1e9, sy: -1e9, list: [], pos: 0 };
+
+    function _resetPickCycle() {
+      _pickCycle.sx = -1e9;
+      _pickCycle.sy = -1e9;
+      _pickCycle.list = [];
+      _pickCycle.pos = 0;
+    }
+
+    // ============ 帧推送：原始 RGBA POST（主）+ PNG dataURL（回退）============
+    // 旧链路每帧 PNG 编码 65ms + Python 解码 32ms ≈ 9fps。
+    // 新链路直接 gl.readPixels（≈9ms @1050x1200）→ fetch POST 原始字节
+    // （≈2.5ms + 9.5ms/MB），Python 侧零解码，实测可到 25~40fps。
+    // 注意：readPixels 行序自下而上（OpenGL 原点在左下），Python 侧用
+    // QPainter scale(1,-1) 镜像绘制，负 stride 的 QImage 会崩（已实测）。
+    var _framePort = 0;      // >0 = 原始帧 HTTP 端点可用
+    var _frameToken = '';    // 实例令牌：只让本实例的后端接收我的帧
+    var _rawOk = true;       // false = 回退 PNG dataURL 通道
+    var _rawFail = 0;        // 连续失败计数（≥3 判定端点不可用）
+    var _directMode = false; // true = 可见窗口直出，不推帧、不读像素
+
+    // main/Python 在 setBounds 之后通过 /eval 写这个属性。用 setter 是为了
+    // 在赋值当下立刻重算模型位置，而不是等下一帧 ticker —— 窗口位置已经
+    // 变了、内容尺寸还没变的这一帧如果按旧中心画，就会先偏左上/右下。
+    var _petTarget = null;
+    // 目标几何的单调序号：Python 侧的动画步进（异步线程）和最终几何
+    // （Qt 主线程同步 /eval）是两条独立通道，晚到的旧步进可能覆盖新目标，
+    // 模型就会先偏到旧几何再被弹回（滚轮放大偏左上、缩小偏右下）。
+    // 只接受序号单调递增的写入，乱序/过期的目标一律丢弃。
+    var _petSeq = -1;
+    try {
+      Object.defineProperty(window, '__petTarget', {
+        configurable: true,
+        get: function () { return _petTarget; },
+        set: function (v) {
+          if (v && typeof v === 'object' && v.seq != null) {
+            if (v.seq < _petSeq) return;   // 过期/乱序目标：忽略
+            if (v.seq > _petSeq) _petSeq = v.seq;
+          }
+          _petTarget = v;
+          if (typeof _applyTargetCompensation === 'function') _applyTargetCompensation();
+        }
+      });
+    } catch (e) { /* 不支持 defineProperty 时退回 ticker 补偿 */ }
+    var _pushOn = true;      // Python 侧窗口隐藏时下发 setPush{on:false} 停推
+    var _inFlight = false;   // 背压：上一帧响应未回来前不再发新请求
+    var _again = false;      // 期间又出新帧 → 响应回来时补推最新一帧
+    var _pixBuf = null;      // 复用的像素缓冲（尺寸变化时重建）
+    var _pixW = 0, _pixH = 0;
+
+    // ---- 回传裁剪（清晰度与帧率的共同解法）----
+    // Live2D 画布是 6500×6500 的方形，实测人物只占画布 41%，其余全是透明。
+    // 以前为了帧率把整幅画布降到 0.5× 传，结果被放大显示 → 发虚。
+    // 现在画布永远 ≥ 窗口像素（不缩），改成"只回传有内容的那块"：
+    // 扫描回读缓冲的 alpha 求包围盒，帧体积≈41%，等于白拿 2.4 倍带宽。
+    // 包围盒由真实像素算出（不依赖各家模型的顶点坐标约定），并且：
+    //   · 内容贴到裁剪边界 → 立刻向外扩（绝不裁掉东西）
+    //   · 明显变小 → 连续两次采样都成立才缩小（防抖动/防来回改查询参数）
+    var _crop = {on: true, valid: false, x: 0, y: 0, w: 0, h: 0,
+                 scan: 0, shrink: 0, pad: 16};
+
+    function _cropReset() {
+      _crop.valid = false;
+      _crop.scan = 0;
+      _crop.shrink = 0;
+    }
+
+    // 扫回读缓冲的 alpha，返回画布坐标（左上原点）下的不透明包围盒
+    function _scanOpaqueRect(buf, w, h, ox, oy) {
+      var stride = (w > 900 || h > 900) ? 8 : 6;
+      var minX = 1e9, minY = 1e9, maxX = -1, maxY = -1;
+      for (var y = 0; y < h; y += stride) {
+        var row = y * w * 4;
+        for (var x = 0; x < w; x += stride) {
+          if (buf[row + x * 4 + 3] > 6) {
+            if (x < minX) minX = x;
+            if (x > maxX) maxX = x;
+            if (y < minY) minY = y;
+            if (y > maxY) maxY = y;
+          }
+        }
+      }
+      if (maxX < 0) return null;
+      // 光栅行序自下而上（OpenGL 原点左下）→ 转成左上原点的 y
+      var yTop = oy + (h - 1 - maxY);
+      return {
+        x: ox + minX, y: yTop,
+        w: maxX - minX + 1, h: maxY - minY + 1,
+        // 贴边 = 内容可能已经被裁掉（下一轮必须往外扩）
+        touch: (minX <= stride) || (minY <= stride) ||
+               (maxX + stride >= w) || (maxY + stride >= h)
+      };
+    }
+
+    function _cropUnion(a, b) {
+      var x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
+      var r = Math.max(a.x + a.w, b.x + b.w);
+      var d = Math.max(a.y + a.h, b.y + b.h);
+      return {x: x, y: y, w: r - x, h: d - y};
+    }
+
+    // 每 N 帧根据当前回读帧更新裁剪框（成本 ≈0.2ms，节流到 ≈0.25s 一次）
+    function _updateCropFromFrame() {
+      if (!_crop.on || !_pixBuf || !_pixW || !_pixH) return;
+      var wh = _canvasSize();
+      var cw = wh[0], ch = wh[1];
+      if (!cw || !ch) return;
+      _crop.scan++;
+      if (_crop.scan % 8 !== 0 && _crop.valid) return;
+
+      var cur = _crop.valid
+        ? {x: _crop.x, y: _crop.y, w: _crop.w, h: _crop.h}
+        : {x: 0, y: 0, w: cw, h: ch};
+      var r = _scanOpaqueRect(_pixBuf, _pixW, _pixH, cur.x, cur.y);
+      if (!r) return;                    // 全透明（切换/隐藏中）：保持现状
+
+      var pad = _crop.pad;
+      var grow = {x: r.x - pad, y: r.y - pad, w: r.w + pad * 2, h: r.h + pad * 2};
+      // 吸附到 4px 网格：避免 1px 抖动引发无意义的查询参数变化
+      grow.x = Math.floor(grow.x / 4) * 4;
+      grow.y = Math.floor(grow.y / 4) * 4;
+      grow.w = Math.ceil(grow.w / 4) * 4 + 4;
+      grow.h = Math.ceil(grow.h / 4) * 4 + 4;
+      if (grow.x < 0) { grow.w += grow.x; grow.x = 0; }
+      if (grow.y < 0) { grow.h += grow.y; grow.y = 0; }
+      if (grow.x + grow.w > cw) grow.w = cw - grow.x;
+      if (grow.y + grow.h > ch) grow.h = ch - grow.y;
+      if (grow.w * grow.h >= cw * ch * 0.98) {      // 裁不出多少 → 直接整幅
+        _crop.valid = false;
+        return;
+      }
+
+      if (!_crop.valid) {
+        _crop.x = grow.x; _crop.y = grow.y; _crop.w = grow.w; _crop.h = grow.h;
+        _crop.valid = true;
+        _crop.shrink = 0;
+        return;
+      }
+
+      var contained = (grow.x >= cur.x && grow.y >= cur.y &&
+                       grow.x + grow.w <= cur.x + cur.w &&
+                       grow.y + grow.h <= cur.y + cur.h);
+      if (r.touch || !contained) {
+        // 只扩不缩：并集里再夹一次画布边界
+        var u = _cropUnion(cur, grow);
+        u.x = Math.max(0, u.x); u.y = Math.max(0, u.y);
+        u.w = Math.min(cw - u.x, u.w); u.h = Math.min(ch - u.y, u.h);
+        _crop.x = u.x; _crop.y = u.y; _crop.w = u.w; _crop.h = u.h;
+        _crop.shrink = 0;
+        return;
+      }
+
+      // 明显变小（面积 <80%）：连续两次采样确认后才缩，避免呼吸引发的抖动
+      if (grow.w * grow.h < _crop.w * _crop.h * 0.8) {
+        _crop.shrink++;
+        if (_crop.shrink >= 2) {
+          _crop.x = grow.x; _crop.y = grow.y; _crop.w = grow.w; _crop.h = grow.h;
+          _crop.shrink = 0;
+          if (_crop.w * _crop.h >= cw * ch * 0.98) _crop.valid = false;
+        }
+      } else {
+        _crop.shrink = 0;
+      }
+    }
+
+    function setFrameEndpoint(port, token) {
+      port = parseInt(port, 10) || 0;
+      _framePort = port;
+      if (token) _frameToken = String(token);
+      _rawOk = port > 0;
+      _rawFail = 0;
+      _inFlight = false;
+      _again = false;
+    }
+
+    function setPush(on) { _pushOn = !!on; }
+
+    function _canvasSize() {
+      var gl = app && app.renderer && app.renderer.gl;
+      if (!gl) return [0, 0];
+      return [gl.drawingBufferWidth | 0, gl.drawingBufferHeight | 0];
+    }
+
+    // 直出模式只在“需要热区/自检”时抓一帧，绝不进入每帧显示链路。
+    // 用途：双击热区需要 alpha 判断哪些格子是模型实体；一次性 readPixels
+    // 后缓存到 _pixBuf，后续 getClickMap 复用，正常渲染仍然零 readPixels。
+    function _invalidateHitFrame() {
+      // Stage/Clip 一变，模型在画布上的位置就变了；旧 readPixels 缓存里
+      // 还是上一个位置的 alpha，必须作废，否则鼠标命中会停在旧位置。
+      _pixBuf = null;
+      _pixW = 0;
+      _pixH = 0;
+    }
+    function _captureClickFrame() {
+      if (_pixBuf && _pixW && _pixH) return true;
+      if (!app || !app.renderer || !model) return false;
+      var gl = app.renderer.gl;
+      var wh = _canvasSize();
+      var cw = wh[0], ch = wh[1];
+      if (!cw || !ch) return false;
+      try {
+        // 直出时 preserveDrawingBuffer=false，先重绘一帧再读；
+        // 这是诊断/热区专用的一次性开销，不改变显示路径。
+        app.renderer.render(app.stage);
+        // readPixels 是同步 GPU→CPU，耗时与读的面积成正比：整块画布
+        // （1920×1080×4=8.3MB）实测 300~1200ms，等于把渲染层冻住一次。
+        // 只读 Stage ∪ 模型包围盒那一块（_hitBand 就是这个范围，必须比
+        // _stageBand 宽，否则"模型比 Stage 宽出来的那截"会被读成透明、
+        // 命中区漏边 → 就是之前那个"看得见却点不到"）。全屏时它是整屏
+        // 8.3MB，Stage 尺寸下约 2.1MB，实测 300ms → 75ms 级。
+        // 推送模式（QWebEngine 既不用 Electron）里 _crop 是帧推送自己的裁剪框，
+        // 这里不能动它，整幅读保持原样；只有直出模式才按 band 收窄。
+        var band = _directMode ? _hitBand() : { x0: 0, y0: 0, x1: 1, y1: 1 };
+        var rx = Math.max(0, Math.floor(band.x0 * cw) - 8);
+        var ry = Math.max(0, Math.floor(band.y0 * ch) - 8);
+        var rw = Math.min(cw - rx, Math.ceil((band.x1 - band.x0) * cw) + 16);
+        var rh = Math.min(ch - ry, Math.ceil((band.y1 - band.y0) * ch) + 16);
+        if (rw < 8 || rh < 8) { rx = 0; ry = 0; rw = cw; rh = ch; }
+        _pixBuf = new Uint8Array(rw * rh * 4);
+        _pixW = rw;
+        _pixH = rh;
+        // 采样路径统一用 _crop 做"画布坐标→缓冲坐标"的偏移换算
+        _crop.valid = true;
+        _crop.x = rx;
+        _crop.y = ry;
+        _crop.w = rw;
+        _crop.h = rh;
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.readPixels(rx, ch - (ry + rh), rw, rh, gl.RGBA, gl.UNSIGNED_BYTE, _pixBuf);
+        return true;
+      } catch (e) {
+        _pixBuf = null;
+        _pixW = 0;
+        _pixH = 0;
+        _crop.valid = false;
+        return false;
+      }
+    }
+
+    function _pushRaw() {
+      if (_inFlight) { _again = true; return; }
+      var gl = app.renderer.gl;
+      var wh = _canvasSize();
+      var cw = wh[0], ch = wh[1];
+      if (!cw || !ch) return;
+      // 读之前先用上一帧的结果校正裁剪框（保证"只读有内容的那块"）
+      _updateCropFromFrame();
+      var rect = _crop.valid
+        ? {x: _crop.x, y: _crop.y, w: _crop.w, h: _crop.h}
+        : {x: 0, y: 0, w: cw, h: ch};
+      var w = rect.w, h = rect.h;
+      var need = w * h * 4;
+      if (!_pixBuf || _pixBuf.length !== need) {
+        _pixBuf = new Uint8Array(need);
+        _pixW = w;
+        _pixH = h;
+        // 帧尺寸变了 → 裁剪框基于旧缓冲算的全作废，下一帧重新扫描
+        _crop.scan = 7;
+      }
+      try {
+        // 保证读的是默认帧缓冲（PIXI 渲染结束后可能残留绑定）
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        // 裁剪框 y 是左上原点，readPixels 是左下原点 → 换算出 GL 行起点
+        gl.readPixels(rect.x, ch - (rect.y + h), w, h,
+                      gl.RGBA, gl.UNSIGNED_BYTE, _pixBuf);
+      } catch (e) {
+        _rawOk = false;
+        return;
+      }
+      var blob;
+      try {
+        // text/plain 属于 CORS 安全内容类型 → 不触发预检（OPTIONS）
+        blob = new Blob([_pixBuf], { type: 'text/plain' });
+      } catch (e) {
+        _rawOk = false;
+        return;
+      }
+      _inFlight = true;
+      var qs = 'w=' + w + '&h=' + h + '&cw=' + cw + '&ch=' + ch +
+               '&ox=' + rect.x + '&oy=' + rect.y +
+               (_frameToken ? '&ftoken=' + encodeURIComponent(_frameToken) : '');
+      fetch('http://127.0.0.1:' + _framePort + '/__pet_frame__?' + qs, {
+        method: 'POST', body: blob, cache: 'no-store', mode: 'cors'
+      }).then(function (r) {
+        if (!r.ok) _rawFail++; else _rawFail = 0;
+        if (_rawFail >= 3) _rawOk = false;
+      }, function () {
+        _rawFail++;
+        if (_rawFail >= 3) _rawOk = false;
+      }).then(function () {
+        _inFlight = false;
+        // 缓冲区在响应到达后才复用，期间新帧已到达则补推最新一帧
+        if (_again) { _again = false; _pushTick(); }
+      });
+    }
+
+    // 每帧推送（注册在 app.render 之后的低优先级 ticker 回调里调用）
+    function _pushTick() {
+      if (_directMode) return;   // 直出：canvas 自己上屏，不需要任何回传
+      if (!_pushOn || _suspendedFrames || _switchBusy || !app || !model) return;
+      if (_glLost) return;
+      // 上下文丢失不一定抛异常，可能只是画面变垃圾 → 每帧主动检测一次
+      try {
+        var g0 = app.renderer && app.renderer.gl;
+        if (g0 && g0.isContextLost && g0.isContextLost()) { _onContextLost('tick'); return; }
+      } catch (e) { }
+      if (_framePort > 0 && _rawOk) { _pushRaw(); return; }
+      if (window.bridge) {
+        try { window.bridge.pushFrame(app.view.toDataURL('image/png')); } catch (e) { }
+      }
+    }
+
+    // WebGL 上下文丢失（QtWebEngine 回收 GPU 进程、驱动 TDR、休眠唤醒后常见）：
+    // 上下文一丢，纹理与 shader 全部失效；而 pixi-live2d 只在 CONTEXT_UID 变化时
+    // 才 updateWebGLContext → 它会继续按旧 UID 画，输出随机方块/条纹（就是"炸模"，
+    // 但 CPU 侧 drawable/UV 数据完全正常）。唯一可靠的恢复是整页重建（全新 GL 上下文）。
+    function _onContextLost(why) {
+      // 自己主动丢弃上下文（切换模型重建渲染器）不算故障，不能触发整页 reload
+      if (_intentionalLost) return;
+      if (_glLost) return;
+      _glLost = true;
+      _suspendedFrames = true;
+      var n = 0;
+      try {
+        n = parseInt(sessionStorage.getItem('glRebuild') || '0', 10) + 1;
+        sessionStorage.setItem('glRebuild', String(n));
+        sessionStorage.setItem('glRebuildAt', String(Date.now()));
+      } catch (e) { }
+      console.warn('[gl] context lost (' + why + ') rebuild#' + n + ' ' + location.href);
+      if (n > _GL_REBUILD_MAX) {
+        console.error('[gl] context lost too many times (' + n + ')，放弃自动重建');
+        return;
+      }
+      setTimeout(function () {
+        try { location.reload(); } catch (e) { }
+      }, 300);
+    }
+
+    // 立即渲染并推一帧（画布分辨率变化 / 模型加载完成后用，避免空白帧闪动）
+    function _renderNow() {
+      try { app.renderer.render(app.stage); } catch (e) { }
+      _pushTick();
+    }
+
+    // 新模型宽高基准：优先用 internalModel 的布局尺寸（加载完成即可靠），
+    // 回退到显示尺寸除以 scale（避免 bounds 尚未计算时拿到 0）
+    function measureModelBase(m) {
+      var im = (m && m.internalModel) || {};
+      var w = im.width || 0, h = im.height || 0;
+      if (!w || !h) {
+        w = (m.width || 0) / (Math.abs(m.scale.x) || 1);
+        h = (m.height || 0) / (Math.abs(m.scale.y) || 1);
+      }
+      return [w, h];
+    }
+
+    // 模型用到的贴图绝对 URL（必须在 destroy 之前取，否则 settings 已经不可用）
+    function _modelTextureUrls(m) {
+      try {
+        var st = m && m.internalModel && m.internalModel.settings;
+        if (!st || !st.textures) return [];
+        var out = [];
+        for (var i = 0; i < st.textures.length; i++) {
+          out.push(st.resolveURL(st.textures[i]));
+        }
+        return out;
+      } catch (e) { return []; }
+    }
+
+    // 按 URL 销毁并摘掉 pixi 的贴图缓存。
+    // 为什么必须显式做：pixi 的 TextureCache 以「贴图绝对 URL」为全局 key，
+    // 模型销毁时贴图不会被回收 —— 每张 2048/4096 的贴图占 16~64MB 显存，
+    // 换几十个模型后显存耗尽，后续 texImage2D 直接失败（画面又变成碎贴图）。
+    function _releaseTextures(urls) {
+      var cache = null;
+      try { cache = PIXI.utils.TextureCache; } catch (e) { return; }
+      if (!cache || !urls) return;
+      for (var i = 0; i < urls.length; i++) {
+        var u = urls[i];
+        var tex = cache[u];
+        if (!tex) continue;
+        try { delete cache[u]; } catch (e) { }
+        try { tex.destroy(true); } catch (e) { }
+      }
+    }
+
+    // 立即清空舞台并销毁当前模型：先把子节点整体摘出舞台（保证舞台立即干净），
+    // 再逐个 destroy；destroy 抛错也不会残留（旧实现依赖 destroy 自动移出父级，
+    // 一旦 destroy 抛错旧模型会留在舞台上，与新模型同屏 → 部件乱排）。
+    function disposeCurrentModel() {
+      // 先记下旧模型的贴图 URL（销毁后取不到），销毁完模型再释放贴图缓存
+      var oldUrls = _modelTextureUrls(model);
+      var removed = null;
+      if (app && app.stage) {
+        try { removed = app.stage.removeChildren(); } catch (e) { removed = null; }
+      }
+      if (removed && removed.length) {
+        for (var i = 0; i < removed.length; i++) {
+          if (!oldUrls.length) oldUrls = oldUrls.concat(_modelTextureUrls(removed[i]));
+          try { removed[i].destroy({ children: true }); } catch (e) { }
+        }
+      }
+      if (model && (!removed || removed.indexOf(model) < 0)) {
+        try { if (model.parent) model.parent.removeChild(model); } catch (e) { }
+        try { model.destroy({ children: true }); } catch (e) { }
+      }
+      _releaseTextures(oldUrls);
+      model = null;
+      modelBaseW = 0;
+      modelBaseH = 0;
+      // 旧模型的相关状态全部复位（参数引擎对旧模型无意义）
+      _eyeBlinkSaved = null;
+      _presetName = null;
+      _activeExprName = null;
+      _loopState = null;
+      _motionDone = false;
+      _hiddenParts = [];
+      _hiddenDrawables = [];
+      _clearHighlight();
+      _partNameMap = null;   // 换模型后部件名映射失效
+      _cropReset();          // 换模型后裁剪框要按新模型的可见范围重算
+    }
 
     // 根据画布尺寸重新适配模型（始终铺满画布，居中）
+    // applyFit 在拖动时会被每帧调用；每帧 console.log 会经 Electron 主进程
+    // 同步 appendFileSync 写日志，等于给拖动链路加一条磁盘 I/O（实测正是
+    // layout 往返 17ms 的主要成分）。这里改成 300ms 限流，调试信息仍在。
+    var _fitLogT = 0;
+    function _fitLog(msg) {
+      var now = Date.now();
+      if (now - _fitLogT < 300) return;
+      _fitLogT = now;
+      console.log(msg);
+    }
     function applyFit() {
-      if (!model || !modelBaseW || !modelBaseH) return;
+      if (!model || !modelBaseW || !modelBaseH) {
+        console.log('[applyFit] SKIP model=' + !!model + ' base=' + modelBaseW + 'x' + modelBaseH +
+                    ' target=' + targetW + 'x' + targetH);
+        return;
+      }
       var sx = targetW / modelBaseW;
       var sy = targetH / modelBaseH;
-      fitScale = Math.min(sx, sy) * 0.95;
+      if (_directMode) {
+        // 全屏直出：模型高度 = Stage 逻辑高度的 95%，位置以 Stage 中心为准。
+        // 窗口是整块显示器，Stage 由 Python 下发；缩放只改 Stage，不改窗口。
+        var st = _layoutStageLocal();
+        fitScale = (st.h / modelBaseH) * 0.95;
+        model.scale.set(fitScale);
+        model.x = st.x + st.w / 2;
+        model.y = st.y + st.h / 2;
+        _fitLog('[applyFit] stage=' + st.w.toFixed(0) + 'x' + st.h.toFixed(0) +
+                    ' base=' + modelBaseW + 'x' + modelBaseH +
+                    ' fitScale=' + fitScale.toFixed(4) +
+                    ' dpr=' + (window.devicePixelRatio || 1));
+        return;
+      } else {
+        fitScale = Math.min(sx, sy) * 0.95;
+      }
       model.scale.set(fitScale);
       model.x = targetW / 2;
       model.y = targetH / 2;
+      _fitLog('[applyFit] base=' + modelBaseW + 'x' + modelBaseH + ' target=' + targetW + 'x' + targetH +
+                  ' fitScale=' + fitScale.toFixed(4) + ' modelH=' + (modelBaseH * fitScale).toFixed(1) +
+                  ' dpr=' + (window.devicePixelRatio || 1));
+    }
+
+    // 直出模式：窗口 resize 事件是异步的，可能晚于画布尺寸变化一帧。
+    // 如果只在 resize 回调里 applyFit，模型会在这一帧仍按旧画布中心绘制，
+    // 下一帧才被拉回中心 —— 肉眼就是缩放后“偏移锚点又弹回去”。
+    // 每帧渲染前先对齐一次，窗口尺寸一变化就立即重算模型位置。
+    // 直出模式：窗口位置会先于 Chromium 内容尺寸生效。位置先走一步、
+    // 内容还是旧尺寸时，模型按旧尺寸居中就会先偏左上/右下，等尺寸追平
+    // 再被拉回。这里用 main.js 提前下发的目标几何做补偿：无论当前窗口
+    // 内容尺寸走到哪一帧，都把模型画在“目标窗口”的屏幕中心/目标大小上。
+    function _applyTargetCompensation() {
+      // 全屏 Stage 架构不再靠窗口 setBounds 做缩放，旧目标补偿必须关闭，
+      // 否则残留的 __petTarget 会把模型拉回旧窗口几何。
+      if (_directMode) return;
+      var tgt = window.__petTarget;
+      if (!model || !tgt) return;
+      var iw = window.innerWidth, ih = window.innerHeight;
+      var tw = Number(tgt.width || tgt.w || 0);
+      var th = Number(tgt.height || tgt.h || 0);
+      if (!tw || !th) return;
+      // 目标几何在 setBounds 之前就下发了；窗口位置还没到目标时先不补偿，
+      // 否则模型会先跳到目标位置、窗口随后才追过来，变成反方向偏移。
+      // 固定窗口模式（__petUnion）下窗口本来就比目标大，必须始终补偿。
+      if (!window.__petUnion &&
+          (Math.abs(window.screenX - tgt.x) > 1 || Math.abs(window.screenY - tgt.y) > 1)) return;
+      var s = fitScale;
+      if (ih > 0 && Math.abs(ih - th) > 0.5) s *= th / ih;
+      if (window.__petUnion && window.__petZoomAnchor && window.__petZoomPrimed) {
+        // 以“鼠标屏幕点 + 上一帧目标高度”为基准，每帧按高度比例从
+        // 当前模型状态继续缩放。不在动画开始前拍快照，避免上一轮
+        // 动画/窗口收缩还没落定时，拿旧模型位置当基准产生跳动。
+        var za = window.__petZoomAnchor;
+        var zk = th / (za.prevTh || th || 1);
+        var mcx = window.screenX + model.x;
+        var mcy = window.screenY + model.y;
+        model.scale.set(model.scale.x * zk);
+        model.x = (za.ax - window.screenX) + (mcx - za.ax) * zk;
+        model.y = (za.ay - window.screenY) + (mcy - za.ay) * zk;
+        za.prevTh = th;
+      } else {
+        model.scale.set(s);
+        model.x = (tgt.x - window.screenX) + tw / 2;
+        model.y = (tgt.y - window.screenY) + th / 2;
+      }
+      if (window.__petUnion) window.__petZoomPrimed = true;
+      // 记住模型当前在屏幕上的中心。窗口 resize 事件可能在 screenX/Y
+      // 已经更新之后才到，如果那时才用 screenX + model.x 反推旧中心，
+      // 会把“新窗口位置 + 旧局部坐标”当成旧中心，模型就会先向左上跳。
+      window.__modelScreenX = window.screenX + model.x;
+      window.__modelScreenY = window.screenY + model.y;
+    }
+
+    function syncViewportNow() {
+      if (!_directMode || !app || !app.renderer || !model) return;
+      var w = window.innerWidth, h = window.innerHeight;
+      if (w !== targetW || h !== targetH) {
+        // 全屏窗口只在显示器/DPI 变化时改尺寸；画布重排后直接按 Stage 重新适配。
+        app.renderer.resize(w, h);
+        targetW = w;
+        targetH = h;
+        applyFit();
+        _applyCanvasClip();
+        _cropReset();
+      }
+      _applyTargetCompensation();
     }
 
     // 生效画布分辨率：只改渲染缓冲（app.renderer.resize），
     // 不改页面视口 → 不触发 window.resize → 无虚拟机异步中间态 → 无瞬时变大小
     function syncCanvas(w, h) {
-      if (!app) return;
-      // 调整期间暂停帧推送：resize 会立即把画布清空为空白，
+      if (!app) return;      // 调整期间暂停帧推送：resize 会立即把画布清空为空白，
       // 若此时推送则会闪动。先渲染好新分辨率首帧，再恢复推送。
       _suspendedFrames = true;
+      console.log('[syncCanvas] -> ' + w + 'x' + h + ' (prev ' + targetW + 'x' + targetH + ')');
       try {
         // resize 保持当前 resolution 不变（autoDensity 会自动处理 CSS 尺寸）
         app.renderer.resize(w, h);
         targetW = app.view.width;
         targetH = app.view.height;
         applyFit();
-        app.renderer.render(app.stage);   // 立即渲染好新分辨率首帧
       } finally {
+        _cropReset();          // 画布变了，旧的裁剪框按新尺寸算没有意义
+        _pixBuf = null;        // 旧缓冲尺寸也对不上，下一帧按整幅重建
+        _pixW = 0;
+        _pixH = 0;
         _suspendedFrames = false;
       }
-      if (window.bridge) {                // 推一帧就绪的完整帧，实现无感替换
-        window.bridge.pushFrame(app.view.toDataURL('image/png'));
-      }
+      _renderNow();
     }
 
     // ============ 缓动函数 ============
@@ -82,10 +739,53 @@
     }
 
     // ============ 参数写入辅助 ============
+    // 每个参数的索引/取值范围缓存：换模型要清空（见 resetParamInfo）。
+    // 目的：任何 Live2D 模型都能跑同一套驱动代码 ——
+    //   模型没有这个参数 → 直接忽略（不再抛异常）；
+    //   模型参数范围与标准不同（-30~30 / 0~1 / 自定义）→ 按模型自己的 min/max 夹住。
+    var _pInfo = {};
+
+    function resetParamInfo() { _pInfo = {}; }
+
+    // 查参数索引：只用参数的 id 表 indexOf。
+    // 不要用 coreModel.getParameterIndex —— 实测对不存在的名字也会返回 0，
+    // 会把"模型没有的参数"写进 0 号参数（改坏别的参数），这是换模型适配的致命坑。
+    function paramIndex(name) {
+      try {
+        var core = model.internalModel.coreModel;
+        var p = core && core._model && core._model.parameters;
+        if (p && p.ids && p.ids.length) return p.ids.indexOf(name);
+        return -1;
+      } catch (e) { return -1; }
+    }
+
+    function paramInfo(name) {
+      if (Object.prototype.hasOwnProperty.call(_pInfo, name)) return _pInfo[name];
+      var info = null;
+      try {
+        var core = model.internalModel.coreModel;
+        var idx = paramIndex(name);
+        if (idx >= 0) {
+          var p = core._model && core._model.parameters;
+          var mn = (p && p.minimumValues && p.minimumValues.length > idx) ? p.minimumValues[idx] : null;
+          var mx = (p && p.maximumValues && p.maximumValues.length > idx) ? p.maximumValues[idx] : null;
+          info = { i: idx, min: mn, max: mx };
+        }
+      } catch (e) { info = null; }
+      _pInfo[name] = info;
+      return info;
+    }
+
     function applyParam(name, value) {
-      if (model && model.internalModel && model.internalModel.coreModel) {
-        model.internalModel.coreModel.setParameterValueById(name, value);
-      }
+      var info = paramInfo(name);
+      if (!info) return;                 // 该模型没有这个参数 → 静默跳过
+      var v = value;
+      if (typeof v !== 'number' || !isFinite(v)) return;
+      if (info.min !== null && v < info.min) v = info.min;
+      if (info.max !== null && v > info.max) v = info.max;
+      try {
+        model.internalModel.coreModel.setParameterValueById(name, v);
+      } catch (e) { }
     }
 
     function getParamValue(name) {
@@ -95,8 +795,361 @@
       return 0;
     }
 
+    // 参数默认值（清空内置表情时复位用）
+    function getParamDefault(name) {
+      var core = model && model.internalModel && model.internalModel.coreModel;
+      if (!core) return 0;
+      try {
+        var idx = paramIndex(name);
+        if (idx < 0) return 0;
+        var d = core._model && core._model.parameters && core._model.parameters.defaultValues;
+        if (d && d.length > idx) return d[idx];
+      } catch (e) { }
+      return 0;
+    }
+
+    // ============ 拖拽惯性：身体 / 头发 / 衣物的摆动 ============
+    // 用户要求的"惯性"不是拖动模型滞后，而是**手一拽、身体和衣物还甩两下**。
+    // 做法：把 Stage 位移的加速度当成外力，驱动一组二阶弹簧（每个通道一套
+    // K/C，越"轻"的部位越软、晃得越久），再把角位移叠加到 Live2D 参数上。
+    // 纯参数物理，不播作者写的 touch_drag 系列动作。
+    var _sway = {
+      on: true,
+      t: 0,                        // 上次喂位置的时间（= 松手检测基准）
+      tx: 0, ty: 0,                // 目标 Stage 位置（_swayFeed 只是写这个）
+      sx: 0, sy: 0,                // 软化后的位置（固定步长追目标，速度从这里差分）
+      vx: 0, vy: 0,                // 平滑后的速度 px/s
+      last: 0,                     // 上一 tick 的真实时间
+      acc: 0,                      // 还没被固定步长消费掉的时间
+      ch: [],                      // 已解析的通道
+      peak: {},                    // 每通道历史最大偏移（自检用）
+      applied: {},                 // 当前叠加到参数上的量（写入时防自累积）
+      wrote: {},                   // 上次写进去的实际参数值（分辨"是不是别人改过"）
+      init: false,
+      fedN: 0, fedDtMax: 0,        // 位置喂入频率统计（自检用）
+      maxStep: 0,                  // 单帧最大变化（平滑度自检用）
+      maxJerk: 0,                  // 二阶差分最大值（折角自检用）
+      lastOut: {},                 // 上一帧写入的每参数偏移（平滑度自检用）
+      lastOut2: {},                // 上上帧（算二阶差分用）
+      traceParam: 'ParamBodyAngleZ'// 轨迹自检跟踪的参数（可用 swayState.traceParam 改）
+    };
+    var _SWAY_TRACE_PARAM = 'ParamBodyAngleZ';   // 轨迹自检跟踪的参数
+    var _SWAY_TRACE_MAX = 180;                   // 最多保留 3 秒（60fps）
+
+    // 通道定义：match 命中参数名，axis 决定由哪个方向的加速度驱动。
+    // K/C/gain 越小越"硬"（身体），越大越"软"（头发、裙摆），摆得越久。
+    // 摆动强度只由**拖动速度**决定（不用加速度冲击）：早先那版把"松手后速度归零"
+    // 当成加速度冲击，一帧 dt 就能把冲击打满 —— 轻轻挪一下模型也会全身乱甩，
+    // 和现实完全不符（真实惯性只跟末速度有关，跟"停得多突然"关系很小）。
+    var _SWAY_VREF = 1500;      // 打满幅度的拖动速度（px/s）
+    var _SWAY_VDEAD = 45;       // 死区：比这更慢完全不摆（正常慢拖应该几乎看不出来）
+    var _SWAY_EXP = 1.25;       // >1 让中低速更轻、高速更狠（线性=1）
+
+    // === 平滑化（v0.8.1）===
+    // 摆动"卡顿"不是采样频率问题，而是**写进参数的数值序列不连续**：
+    // ① 撞上限时硬夹 + 把速度清零 → 曲线顶部折角后突降；
+    // ② 变步长积分，掉一帧就跨 3 倍步长 → 折角；
+    // ③ 目标角随速度阶跃到满值 → 弹簧被"打"一下，输出带阶跃响应的高频成分；
+    // ④ 速度由"喂位置"的间隔直接差分，而喂入频率本身不均匀 → 速度阶梯。
+    // 对应四条改法：固定子步、软饱和（不清速度）、目标限速、软化位置估速。
+    // 注意写入层保持"幂等总量"（基线 + out），不能改成累加增量：模型每帧
+    // loadParameters() 重置参数，增量式会被不断稀释。
+    var _SWAY_STEP = 1 / 120;   // 基准子步（s），仅用于无帧长信息时的兜底
+    var _SWAY_SUBSTEPS = 2;     // 每帧固定 2 个子步
+    var _SWAY_DT_MAX = 0.033;   // 单帧最多按 33ms 推进：更长（挂起/切模型）直接丢弃
+                                // 关键：h = 帧长 / 子步数 —— 每帧推进的物理时间与渲染帧严格相等，
+                                // 不会再出现"这一帧走 2 步、下一帧走 3 步"导致的回落速度一快一慢
+    var _TAU_V = 0.028;         // 速度 EMA 时间常数（比原来更短：起速快一点，峰值不被拖掉）
+    var _SWAY_SLEW = 500;       // 目标角限速（°/s）：13° 需 26ms 爬完，既不是阶跃也跟得上
+    var _SWAY_WRITE_EPS = 0.02; // 偏移小于这个角度（°）视为 0：静止时不写，避免每帧抹平动画值
+
+    var _SWAY_DEFS = [
+      { tag: 'bodyRoll', match: /^ParamBodyAngleZ$/, axis: 'x', K: 40, C: 7.6, max: 13 },
+      { tag: 'bodyPitch', match: /^ParamBodyAngleX$/, axis: 'y', K: 40, C: 7.6, max: 10 },
+      { tag: 'headRoll', match: /^ParamAngleZ$/, axis: 'x', K: 55, C: 9.4, max: 7 },
+      { tag: 'headTilt', match: /^ParamAngleY$/, axis: 'y', K: 55, C: 9.4, max: 5 },
+      { tag: 'hair', match: /hair|ahoge|pigtail/i, axis: 'x', K: 16, C: 3.4, max: 1.6, soft: true },
+      { tag: 'cloth', match: /skirt|cloth|dress|ribbon|scarf|cape|sleeve|tail/i,
+        axis: 'x', K: 17, C: 3.6, max: 1.2, soft: true }
+    ];
+
+    function _swayAllParams() {
+      try {
+        var p = model.internalModel.coreModel._model.parameters;
+        return (p && p.ids) ? p.ids : [];
+      } catch (e) { return []; }
+    }
+
+    // 模型换掉后重新解析：哪些参数真的存在（不存在就静默跳过，绝不误写 0 号参数）
+    function _swayInit() {
+      var ids = _swayAllParams();
+      var ch = [];
+      for (var i = 0; i < _SWAY_DEFS.length; i++) {
+        var d = _SWAY_DEFS[i];
+        var hit = [];
+        for (var k = 0; k < ids.length; k++) {
+          if (d.match.test(ids[k])) hit.push(ids[k]);
+        }
+        if (d.tag === 'hair' || d.tag === 'cloth') hit = hit.slice(0, 8);   // 别一次改几十个参数
+        for (var h = 0; h < hit.length; h++) {
+          // 按参数真实量程收敛幅度，但**必须按"默认值到最近边界的距离"算**，不能用总量程：
+          // 参数范围经常不对称（如 ParamBodyAngleZ = [-10, 30]，中心 0 往下只剩 10），
+          // 用总量程 42% 会算出 16.8，写到 -13 就被硬夹到 -10 —— 一半摆幅被削平，
+          // 看上去就是"摆到一边就卡住/抖一下"；单向参数（如 Hair_physics = [0,1]）
+          // 更是负半周全部被夹成 0，整条通道等于没有。
+          var inf = paramInfo(hit[h]);
+          var d0 = getParamDefault(hit[h]);
+          var lo = (inf && inf.min !== null) ? Math.abs(d0 - inf.min) : null;
+          var hi = (inf && inf.max !== null) ? Math.abs(inf.max - d0) : null;
+          var avail = (lo === null || hi === null) ? d.max : Math.min(lo, hi);
+          var cap = Math.min(d.max, avail * 0.82);   // 留 18% 余量，任何一帧都碰不到边界
+          // 余量小到根本没有摆动空间（单向参数、量程极窄的"开关型"参数）→ 直接跳过，
+          // 不要把它算进通道：写进去只会被夹，模型看着像没惯性
+          if (!(cap > d.max * 0.1)) continue;
+          ch.push({
+            tag: d.tag, param: hit[h], axis: d.axis, K: d.K, C: d.C,
+            max: cap, soft: !!d.soft,
+            x: 0, v: 0, tv: 0          // tv = 上一子步的目标角（限速基准）
+          });
+        }
+      }
+      _sway.ch = ch;
+      _sway.peak = {};
+      _sway.applied = {};
+      _sway.wrote = {};
+      _sway.init = ch.length > 0;
+      // 软化位置从当前 Stage 起算，避免第一帧速度爆表
+      _sway.tx = _layoutStage.x; _sway.ty = _layoutStage.y;
+      _sway.vx = 0; _sway.vy = 0;
+      _sway.last = 0; _sway.acc = 0;
+      _sway.fedN = 0; _sway.fedDtMax = 0; _sway.maxStep = 0;
+      _sway.maxJerk = 0; _sway.lastOut = {}; _sway.lastOut2 = {}; _sway.trace = [];
+      _sway.traceParam = _SWAY_TRACE_PARAM;
+      try {
+        console.log('[sway] 通道=' + ch.length + ' 参数=' +
+                    ch.map(function (c) { return c.tag + ':' + c.param; }).join(','));
+      } catch (e) { }
+      return ch.length;
+    }
+
+    // Stage 位置更新时喂**目标位置**（拖动 / 命令位移 / 滚轮缩放位移都会走这里）。
+    // 速度就在这里按真实间隔算：dx/dt 做 EMA。不要在子步里拿"软位置差分"估速——
+    // 那是把速度再降采样一遍，稀疏喂入时软位置先追平、速度就被抹成 0，
+    // 于是目标角忽高忽低，摆动看上去就是抖的。
+    function _swayFeed(x, y) {
+      var now = performance.now();
+      if (!_sway.t) {
+        _sway.t = now;
+        _sway.tx = x; _sway.ty = y;
+        _sway.fed = true;
+        return;
+      }
+      var dt = (now - _sway.t) / 1000;
+      _sway.fedN++;
+      // 只统计"拖动过程中"的间隔：reset 后第一次喂位置会隔着几秒，不该算进去
+      if (dt < 0.25 && dt * 1000 > _sway.fedDtMax) _sway.fedDtMax = dt * 1000;
+      var dx = x - _sway.tx, dy = y - _sway.ty;
+      _sway.tx = x; _sway.ty = y; _sway.t = now;
+      _sway.fed = true;
+      if (dt > 0.0005 && dt < 0.25) {
+        var kv = 1 - Math.exp(-dt / _TAU_V);
+        _sway.vx += (dx / dt - _sway.vx) * kv;
+        _sway.vy += (dy / dt - _sway.vy) * kv;
+      }
+    }
+
+    // 速度 → 目标幅度比例（-1..1）。死区以下为 0；指数 >1 让轻拖更轻。
+    function _swayVelRatio(v) {
+      var a = Math.abs(v);
+      if (a <= _SWAY_VDEAD) return 0;
+      var r = (a - _SWAY_VDEAD) / (_SWAY_VREF - _SWAY_VDEAD);
+      if (r > 1) r = 1;
+      if (_SWAY_EXP !== 1) r = Math.pow(r, _SWAY_EXP);
+      return v > 0 ? -r : r;   // 往右拖 → 身体向后（左）倾，方向与惯性相反
+    }
+
+    // 软饱和：把弹簧的原始角位移压进 ±max，但**不在边界上把速度清零**。
+    // |u|<=0.75 完全线性（手感不变），往外 tanh 过渡到 1.0 —— 冲顶时曲线是圆的，
+    // 不再出现"平顶后突降"那种顿感。u 可以短暂超过 1，弹簧自己会拉回来。
+    function _swaySoft(u) {
+      var a = Math.abs(u);
+      if (a <= 0.75) return u;
+      var s = 0.75 + 0.25 * Math.tanh((a - 0.75) / 0.25);
+      return u > 0 ? s : -s;
+    }
+
+    // 一个物理子步：目标角限速 + 二阶弹簧。速度不在这里动，它由 _swayFeed 按真实
+    // 位置采样更新、由 _swayTick 在无输入时慢慢衰减，所以这里对 h 是纯积分。
+    function _swayStep(h) {
+      // 每通道：目标角限速 + 二阶弹簧
+      var maxd = _SWAY_SLEW * h;
+      for (var i = 0; i < _sway.ch.length; i++) {
+        var c = _sway.ch[i];
+        var v = (c.axis === 'y') ? _sway.vy : _sway.vx;
+        var ratio = _swayVelRatio(v);
+        if (ratio > 1) ratio = 1;
+        if (ratio < -1) ratio = -1;
+        var tgt = ratio * c.max;
+        // 目标限速：速度再跳，目标也按 ≤_SWAY_SLEW °/s 的斜线爬，弹簧看到连续激励
+        var d = tgt - c.tv;
+        if (d > maxd) tgt = c.tv + maxd;
+        else if (d < -maxd) tgt = c.tv - maxd;
+        c.tv = tgt;
+        var acc = c.K * (tgt - c.x) - c.C * c.v;
+        c.v += acc * h;
+        c.x += c.v * h;
+        if (!isFinite(c.x) || !isFinite(c.v)) { c.x = 0; c.v = 0; c.tv = 0; }
+        // 数值安全边界（软饱和之后基本到不了）；不清速度，避免折角
+        if (c.x > c.max * 1.8) c.x = c.max * 1.8;
+        if (c.x < -c.max * 1.8) c.x = -c.max * 1.8;
+        // 收尾对齐：偏移足够小就归零，避免一点点残值一直挂着（模型会显得歪着）
+        if (Math.abs(c.x) < c.max * 0.004 && Math.abs(c.v) < 0.05) { c.x = 0; c.v = 0; c.tv = 0; }
+      }
+    }
+
+    // sway 写的是「默认值 + 偏移」这个绝对值，谁在它前面写、谁就被抹平。
+    // 这些参数如果正被更高优先级的写入者占用（内置动画/流式参数、平滑过渡、鼠标跟随），
+    // sway 必须让路，否则就会出现「动画下发了却一动不动」：
+    // 符玄就是典型 —— 它的 4 个姿态参数 ParamAngleZ / ParamAngleY / ParamBodyAngleX /
+    // ParamBodyAngleZ 正好全被 sway 通道占用，于是歪头/摇摆/点头/欢呼的头身动作全被写回 0，
+    // 只有未被 sway 占用的 ParamAngleX（摇头）和嘴角/眼睛参数能看见。
+    function _swayBusyParams() {
+      var busy = {};
+      try {
+        if (_stream.playing && _stream.count > 0) {
+          for (var i = 0; i < _stream.params.length; i++) busy[_stream.params[i]] = 1;
+        }
+      } catch (e) { }
+      for (var tn in _trackTargets) busy[tn] = 1;
+      for (var wn in _tweenStates) busy[wn] = 1;
+      return busy;
+    }
+
+    function _swayTick(now) {
+      if (!_sway.on || !model || !_sway.init) return;
+      if (!_sway.ch.length) return;
+      if (!_sway.last) { _sway.last = now; return; }
+      var real = (now - _sway.last) / 1000;
+      _sway.last = now;
+      if (!(real > 0)) real = _SWAY_STEP;
+      if (real > _SWAY_DT_MAX) real = _SWAY_DT_MAX;   // 挂起/切模型：多余时间丢弃，不补步
+      // 本帧没有新的位置输入 → 速度按 0.10^t 慢衰减（松手后自然收干净）。
+      // 不设"松手判定"阈值：判定早了会在稀疏拖动时误判、把速度一段段砍掉，
+      // 那正是摆动"顿一下"的来源；这里用"有没有输入"这个事实，不用时间去猜。
+      if (!_sway.fed) {
+        var decay = Math.pow(0.10, real);
+        _sway.vx *= decay; _sway.vy *= decay;
+        if (Math.abs(_sway.vx) < 0.5) _sway.vx = 0;
+        if (Math.abs(_sway.vy) < 0.5) _sway.vy = 0;
+      }
+      _sway.fed = false;
+      // 每帧固定 2 个子步、步长 = 帧长/2：推进的物理时间恒等于这一帧的时间
+      var h = real / _SWAY_SUBSTEPS;
+      for (var s = 0; s < _SWAY_SUBSTEPS; s++) _swayStep(h);
+
+      // 统一成每参数合计的偏移（软饱和在这里做，弹簧状态保持原始）
+      var out = {};
+      for (var i = 0; i < _sway.ch.length; i++) {
+        var c = _sway.ch[i];
+        var y = c.max * _swaySoft(c.x / c.max);
+        out[c.param] = (out[c.param] || 0) + y;
+        var pk = _sway.peak[c.param] || 0;
+        if (Math.abs(y) > Math.abs(pk)) _sway.peak[c.param] = y;
+      }
+      // 平滑度自检：单帧最大变化 + 二阶差分最大（验收"数值序列是否连续"用）
+      for (var nm in out) {
+        var dstep = Math.abs(out[nm] - (_sway.lastOut[nm] || 0));
+        var d2 = Math.abs(out[nm] - 2 * (_sway.lastOut[nm] || 0) + (_sway.lastOut2[nm] || 0));
+        if (dstep > _sway.maxStep) _sway.maxStep = dstep;
+        if (d2 > _sway.maxJerk) _sway.maxJerk = d2;
+      }
+      _sway.lastOut2 = _sway.lastOut;
+      _sway.lastOut = out;
+      // 每帧轨迹（自检：把"参数数值序列"原样留一份，用于确认曲线连续）
+      if (!_sway.trace) _sway.trace = [];
+      var trv = out[_sway.traceParam || _SWAY_TRACE_PARAM];
+      _sway.trace.push(trv === undefined ? 0 : Math.round(trv * 1000) / 1000);
+      if (_sway.trace.length > _SWAY_TRACE_MAX) _sway.trace.shift();
+
+      // 与更高优先级写入者冲突的参数：本帧不写、也不在收尾时补写默认值
+      var busy = _swayBusyParams();
+      for (var bp in busy) {
+        if (out[bp] !== undefined) delete out[bp];
+        if (_sway.applied[bp]) _sway.applied[bp] = 0;
+      }
+
+      // 写入用「参数默认值 + 偏移」这个确定量，不再拿 getParameterValueById 的结果当基线。
+      // 原因：internalModel.update() 每帧 loadParameters() 重置、idle 动作和物理又各写一遍，
+      // 读回来的 cur 里混着它们的逐帧变化，当基线就等于把这个抖动一起叠进摆动；
+      // 而"幂等总量"写法还要靠 |cur - lastW| 判断两态，判错一次就是一个台阶。
+      // 写 def + out 完全确定：out 衰减到 0 时写回 def，也不会有残值。
+      for (var name in out) {
+        var yv = out[name];
+        var pv = _sway.applied[name] || 0;
+        // 偏移小到看不见、上一帧也没有偏移 → 干脆不写（静止时不产生任何写入，
+        // 才不会每帧把动画/跟随写到这些参数上的值抹成默认值）
+        if (Math.abs(yv) < _SWAY_WRITE_EPS && Math.abs(pv) < _SWAY_WRITE_EPS) {
+          if (_sway.applied[name] !== undefined) _sway.applied[name] = 0;
+          continue;
+        }
+        var def = getParamDefault(name);
+        applyParam(name, def + yv);
+        _sway.wrote[name] = def + yv;
+        _sway.applied[name] = yv;
+      }
+      // 本帧没有偏移的参数：写回默认值（同样确定，不加任何推断）
+      for (var pn in _sway.applied) {
+        if (out[pn] === undefined && _sway.applied[pn]) {
+          var d2 = getParamDefault(pn);
+          applyParam(pn, d2);
+          _sway.wrote[pn] = d2;
+          _sway.applied[pn] = 0;
+        }
+      }
+    }
+
+    function _swayState(cmd) {
+      var st = {
+        on: _sway.on,
+        channels: _sway.ch.length,
+        params: _sway.ch.map(function (c) { return c.tag + ':' + c.param; }),
+        v: [Math.round(_sway.vx), Math.round(_sway.vy)],
+        vratio: Math.round(_swayVelRatio(_sway.vx) * 1000) / 1000,
+        vref: _SWAY_VREF, vdead: _SWAY_VDEAD,
+        step: _SWAY_STEP, tauV: _TAU_V, slew: _SWAY_SLEW,
+        feedN: _sway.fedN, feedDtMax: Math.round(_sway.fedDtMax * 10) / 10,
+        maxStep: Math.round(_sway.maxStep * 10000) / 10000,
+        maxJerk: Math.round(_sway.maxJerk * 10000) / 10000,
+        traceParam: _sway.traceParam || _SWAY_TRACE_PARAM, trace: (_sway.trace || []).slice(),
+        peak: {}, now: {}, applied: {}, abs: {}, caps: {}
+      };
+      for (var p in _sway.peak) st.peak[p] = Math.round(_sway.peak[p] * 1000) / 1000;
+      for (var q in _sway.applied) st.applied[q] = Math.round(_sway.applied[q] * 1000) / 1000;
+      for (var i = 0; i < _sway.ch.length; i++) {
+        var c = _sway.ch[i];
+        st.now[c.param] = Math.round(c.x * 1000) / 1000;
+        st.abs[c.param] = Math.round(getParamValue(c.param) * 100) / 100;
+        st.caps[c.param] = Math.round(c.max * 1000) / 1000;
+      }
+      if (cmd && cmd.traceParam) {
+        _sway.traceParam = String(cmd.traceParam);
+        _sway.trace = [];
+      }
+      if (cmd && cmd.reset) {
+        _sway.peak = {}; _sway.maxStep = 0; _sway.maxJerk = 0;
+        _sway.fedN = 0; _sway.fedDtMax = 0; _sway.trace = [];
+      }
+      return st;
+    }
+
     // ============ 平滑过渡引擎（低优先级）============
     var _tweenStates = {};  // {paramName: {from, to, start, duration}}
+    // 配音口型锁：由 TTS 服务写入；每帧在模型 update 之后强制覆盖，避免动作自带口型抢嘴。
+    var _mouthLock = null;
+    // 不同模型的口型参数名不统一：guanghui_9 用 ParamMouthOpenY，
+    // z23 用 PARAM_MOUTH_OPEN_Y / PARAM_MOUTH_FORM。按 id 归一后动态取真实参数名，
+    // 不能把固定名字直接交给 setParameterValueById（不存在时会误写 0 号参数）。
+    var _mouthParamIds = { open: '' };
 
     function smoothSetParams(params, ms) {
       var now = performance.now();
@@ -132,10 +1185,17 @@
     }
 
     // ============ 鼠标跟随引擎（每帧指数平滑，独立于 tween）============
-    // Python 只发目标值，JS 每帧用 1-exp(-dt/tau) 逼近，不重启 → 丝滑且 FPS 无关
+    // Python 只发目标值，JS 每帧用 1-exp(-dt/tau) 逼近，不重启 → 丝滑且 FPS 无关。
+    // 分层时间常数：眼球最快（几乎实时）、头颈稍慢、身体最慢（有重量感）。
     var _trackTargets = {};
     var _trackActive = false;
     var _trackLastTime = 0;
+
+    var TRACK_TAU = {
+      ParamEyeBallX: 55, ParamEyeBallY: 55,
+      ParamAngleX: 110, ParamAngleY: 110, ParamAngleZ: 140,
+      ParamBodyAngleX: 200, ParamBodyAngleY: 200, ParamBodyAngleZ: 220
+    };
 
     function setTrackTarget(params) {
       _trackTargets = {};
@@ -148,12 +1208,12 @@
       if (!_trackActive) return;
       var dt = _trackLastTime ? Math.min(100, now - _trackLastTime) : 16;
       _trackLastTime = now;
-      var tau = 50;  // ms 时间常数（越小越灵敏，40~80 为佳）
-      var alpha = 1 - Math.exp(-dt / tau);
       var remaining = 0;
       for (var name in _trackTargets) {
         // 流式动画运行时跳过被流式控制的参数
         if (_stream.playing && _stream.params.indexOf(name) >= 0) continue;
+        var tau = TRACK_TAU[name] || 90;
+        var alpha = 1 - Math.exp(-dt / tau);
         var cur = getParamValue(name);
         var tgt = _trackTargets[name];
         var next = cur + (tgt - cur) * alpha;
@@ -180,6 +1240,7 @@
       playing: false,
       repeat: 0,            // -1=无限循环, 0=播一遍, N=播N遍
       startTime: 0,
+      kind: '',             // 'stream'=智能体流式动画 / 'builtin'=内置动画预设
 
       getValue: function (frameIdx, paramIdx) {
         return this.values[frameIdx * this.paramCount + paramIdx];
@@ -242,7 +1303,7 @@
     }
 
     // ============ 流式命令处理 ============
-    function handleStartStream(cmd) {
+    function handleStartStream(cmd, kind) {
       var data = typeof cmd.streamData === 'string'
         ? JSON.parse(cmd.streamData) : cmd.streamData;
 
@@ -260,6 +1321,7 @@
       _stream.count = 0;
       _stream.capacity = 0;
       _stream.values = new Float64Array(0);
+      _stream.kind = kind || 'stream';
 
       if (data.values && data.values.length) {
         _stream.appendRows(data.values);
@@ -293,6 +1355,978 @@
       _stream.count = 0;
       _stream.capacity = 0;
       _stream.values = new Float64Array(0);
+      _stream.kind = '';
+    }
+
+    // ============ 内置表情预设（参数型，模型自带表情缺失时兜底）============
+    // 只使用 Cubism 标准参数 id：模型没有的参数 setParameterValueById 会被安全忽略。
+    var BUILTIN_EXPR = {
+      happy: {
+        label: '开心',
+        params: {
+          ParamMouthForm: 0.9, ParamMouthOpenY: 0.35,
+          ParamBrowLY: 0.7, ParamBrowRY: 0.7,
+          ParamEyeLSmile: 0.8, ParamEyeRSmile: 0.8,
+          ParamEyeLOpen: 0.75, ParamEyeROpen: 0.75,
+          ParamAngleY: 3
+        }
+      },
+      sad: {
+        label: '难过',
+        eyeBlinkFree: true,
+        params: {
+          ParamMouthForm: -0.8,
+          ParamBrowLY: -0.7, ParamBrowRY: -0.7,
+          ParamEyeLOpen: 0.55, ParamEyeROpen: 0.55,
+          ParamEyeBallY: -0.5, ParamAngleY: -8
+        }
+      },
+      angry: {
+        label: '生气',
+        params: {
+          ParamMouthForm: -0.7,
+          ParamBrowLY: -0.5, ParamBrowRY: -0.5,
+          ParamBrowLAngle: 0.9, ParamBrowRAngle: 0.9,
+          ParamEyeLOpen: 0.9, ParamEyeROpen: 0.9,
+          ParamAngleZ: 5
+        }
+      },
+      surprised: {
+        label: '惊讶',
+        params: {
+          ParamMouthOpenY: 0.85,
+          ParamBrowLY: 1.0, ParamBrowRY: 1.0,
+          ParamEyeLOpen: 1.0, ParamEyeROpen: 1.0,
+          ParamAngleY: 5, ParamBodyAngleZ: -2
+        }
+      },
+      shy: {
+        label: '害羞',
+        params: {
+          ParamMouthForm: 0.5,
+          ParamBrowLY: 0.2, ParamBrowRY: 0.2,
+          ParamAngleY: -5, ParamAngleZ: 6,
+          ParamEyeBallX: 0.35, ParamEyeBallY: -0.6
+        }
+      },
+      think: {
+        label: '思考',
+        params: {
+          ParamAngleX: -10, ParamAngleZ: 7,
+          ParamEyeBallX: 0.85, ParamEyeBallY: 0.55,
+          ParamBrowLY: 0.35, ParamMouthForm: -0.15
+        }
+      },
+      cry: {
+        label: '哭泣',
+        eyeBlinkFree: true,
+        params: {
+          ParamEyeLOpen: 0.0, ParamEyeROpen: 0.0,
+          ParamMouthForm: -0.9, ParamMouthOpenY: 0.3,
+          ParamBrowLY: -0.9, ParamBrowRY: -0.9,
+          ParamAngleY: -9
+        }
+      },
+      sleepy: {
+        label: '困倦',
+        eyeBlinkFree: true,
+        params: {
+          ParamEyeLOpen: 0.25, ParamEyeROpen: 0.25,
+          ParamBrowLY: -0.35, ParamBrowRY: -0.35,
+          ParamMouthOpenY: 0.12,
+          ParamAngleY: -9, ParamBodyAngleZ: 4
+        }
+      }
+    };
+
+    var _presetName = null;        // 当前生效的内置表情 id
+    var _activeExprName = null;    // 当前生效的模型自带表情名
+    var _eyeBlinkSaved = null;     // 内置表情临时挂起的 eyeBlink 引用
+
+    // ============ 换装锁定（Clothes* 等服装参数）============
+    // 换装靠参数值控制部件显隐（例如 Clothes1 长短裙、Clothes3 胸口衣服、
+    // Clothes4 鞋子）。这些参数会被动作 / 表情 / 物理的 update 顺手改写，
+    // 只在点菜单时写一次经常会"穿一半又变回去"，所以每帧在模型 update
+    // 之后强压一次，直到用户下次换装再改。
+    var _outfitLock = {};          // {parameterId: value}
+    var _outfitNames = {};         // 诊断用：{parameterId: '当前状态名'}
+
+    function _applyOutfitLock() {
+      if (!model || !model.internalModel || !model.internalModel.coreModel) return;
+      var core = model.internalModel.coreModel;
+      for (var _ok in _outfitLock) {
+        try { core.setParameterValueById(_ok, _outfitLock[_ok]); } catch (e) { }
+      }
+    }
+
+    // 换装锁的"最后一刀"：ticker 回调只保证晚于**一般**参数写入，但模型自带的
+    // 循环/动作参数（例如碧蓝的 Circulation_Head_16 左白手套切换）是在
+    // internalModel.update 的 motion 阶段被写回去的 —— 实测 ticker 里压值后，
+    // 该参数每帧又被重置成 0，菜单选了也没反应。afterMotionUpdate 正好在
+    // "动作算完、写模型参数之前"触发，是能拿到的最晚时机。
+    var _outfitHookModel = null;
+    function _ensureOutfitHook() {
+      if (!model || _outfitHookModel === model) return;
+      var im = model.internalModel;
+      if (!im || !im.on) return;
+      try {
+        im.on('afterMotionUpdate', function () { _applyOutfitLock(); });
+        _outfitHookModel = model;
+      } catch (e) { }
+    }
+
+    function _clearOutfitLock() {
+      _outfitLock = {};
+      _outfitNames = {};
+    }
+
+    // 内置表情改眼部开合时需临时停用 eyeBlink（库每帧都会覆盖眼部参数）
+    function _suspendEyeBlink(on) {
+      var im = model && model.internalModel;
+      if (!im) return;
+      if (on) {
+        if (im.eyeBlink) { _eyeBlinkSaved = im.eyeBlink; im.eyeBlink = null; }
+      } else if (_eyeBlinkSaved) {
+        try { im.eyeBlink = _eyeBlinkSaved; } catch (e) { }
+        _eyeBlinkSaved = null;
+      }
+    }
+
+    function applyBuiltinExpression(id) {
+      var p = BUILTIN_EXPR[id];
+      if (!p || !model) return false;
+      // 先复位模型自带表情，避免两层叠加
+      try {
+        var em = model.internalModel.motionManager.expressionManager;
+        if (em) em.resetExpression();
+      } catch (e) { }
+      _activeExprName = null;
+      _presetName = id;
+      smoothSetParams(p.params, 320);
+      _suspendEyeBlink(!!p.eyeBlinkFree);
+      return true;
+    }
+
+    function clearBuiltinExpression() {
+      var p = _presetName ? BUILTIN_EXPR[_presetName] : null;
+      if (p) {
+        var d = {};
+        for (var k in p.params) d[k] = getParamDefault(k);
+        smoothSetParams(d, 320);
+      }
+      _presetName = null;
+      _suspendEyeBlink(false);
+    }
+
+    // ============ 内置动画预设（参数关键帧，复用流式引擎）============
+    var BUILTIN_ANIM = {
+      nod: {
+        label: '点头',
+        params: ['ParamAngleY'],
+        values: [[0], [14], [2], [-8], [0]],
+        interval: '140ms'
+      },
+      shake: {
+        label: '摇头',
+        params: ['ParamAngleX'],
+        values: [[0], [15], [-15], [11], [-7], [0]],
+        interval: '120ms'
+      },
+      tilt: {
+        label: '歪头',
+        params: ['ParamAngleZ', 'ParamAngleX'],
+        values: [[0, 0], [10, -3], [12, -4], [6, -2], [0, 0]],
+        interval: '180ms'
+      },
+      sway: {
+        label: '摇摆',
+        params: ['ParamBodyAngleX', 'ParamBodyAngleZ'],
+        values: [[0, 0], [7, 4], [-7, -4], [5, 3], [0, 0]],
+        interval: '260ms'
+      },
+      look_around: {
+        label: '张望',
+        params: ['ParamEyeBallX', 'ParamAngleX'],
+        values: [[0, 0], [0.9, 14], [0.9, 14], [-0.9, -14], [-0.9, -14], [0, 0]],
+        interval: '380ms'
+      },
+      cheer: {
+        label: '欢呼',
+        params: ['ParamAngleY', 'ParamMouthOpenY', 'ParamEyeLSmile', 'ParamEyeRSmile'],
+        values: [[0, 0, 0, 0], [8, 0.5, 0.8, 0.8], [-4, 0.2, 0.6, 0.6],
+        [8, 0.5, 0.8, 0.8], [0, 0, 0, 0]],
+        interval: '220ms'
+      }
+    };
+
+    function startBuiltinAnimation(id, loop) {
+      var a = BUILTIN_ANIM[id];
+      if (!a || !model) return false;
+      handleStartStream({
+        streamData: {
+          interval: a.interval,
+          params: a.params,
+          values: a.values,
+          repeat: loop ? -1 : 1
+        }
+      }, 'builtin');
+      return true;
+    }
+
+    // ============ 模型自带动作 / 表情 ============
+    var MotionPriorityJS = { none: 0, idle: 1, normal: 2, force: 3 };
+
+    var _loopState = null;    // {group, index, priority, loop} — 当前由本插件发起的动作
+    var _motionDone = false;  // motionFinish 事件标记（由参数 tick 轮询消费）
+
+    function _isMotionPlaying() {
+      try {
+        var mm = model && model.internalModel && model.internalModel.motionManager;
+        if (!mm) return false;
+        return !!mm.playing || !mm.isFinished();
+      } catch (e) {
+        return false;
+      }
+    }
+
+    // 原生 idle 动作只作为“底噪”存在：它不能阻断鼠标跟随、内置动画和参数流。
+    // 显式动作（complete/touch 等）仍然独占参数，避免与插件写入打架。
+    function _isIdleMotionPlaying() {
+      try {
+        var mm = model && model.internalModel && model.internalModel.motionManager;
+        var st = mm && mm.state;
+        var idleGroup = mm && mm.groups && mm.groups.idle;
+        return !!(mm && mm.playing && idleGroup && st && st.currentGroup === idleGroup);
+      } catch (e) { return false; }
+    }
+
+    // 找控制**嘴巴开合**的参数。form 是形状（圆扁/微笑），不是开合，不探测也不写入。
+    // 分层优先级：
+    //   1) 精确命中 ParamMouthOpenY / PARAM_MOUTH_OPEN_Y / sdParamMouthOpenY（碧蓝航线 225+/225 模型用）
+    //   2) norm 含 mouthopen 子串（排除 mouthform），且排除一堆 shape 词：
+    //      form/puker/display/size/type/smile/change/up/alpha/key/x/y（纯 form 会被排除）
+    //   3) 宽松：含 mouth 或 lip + 含 open（且不含上述形状词）
+    //   每一层里多候选时，选最干净的（无独立数字 token）。
+    function _resolveMouthParamIds() {
+      _mouthParamIds.open = '';
+      try {
+        var core = model && model.internalModel && model.internalModel.coreModel;
+        var p = core && core._model && core._model.parameters;
+        var ids = p && p.ids;
+        if (!ids || !ids.length) {
+          console.log('[mouthLock] 参数表为空，无法自动探测嘴型参数');
+          return;
+        }
+
+        // —— 辅助 ——
+        function normOf(raw) { return raw.toLowerCase().replace(/[^a-z0-9]/g, ''); }
+        function hasDigitToken(raw) {
+          for (var ti = 0; ti < raw.length; ti++) {
+            var ch = raw[ti];
+            if (ch >= '0' && ch <= '9') return true;
+          }
+          return false;
+        }
+        function pickCleanest(cands) {
+          if (!cands.length) return '';
+          for (var ci = 0; ci < cands.length; ci++) {
+            if (!hasDigitToken(cands[ci])) return cands[ci];
+          }
+          return cands[0];
+        }
+        // norm 里出现这些词 → 说明是形状/显示/位移，不是开合，跳过
+        var SHAPE_BAN = ['form', 'puker', 'display', 'size', 'type',
+                         'smile', 'bianxing', 'change', 'qipao',
+                         'alpha', 'key', 'autopen', 'up', 'down',
+                         'angle', 'mode', 'collection'];
+
+        // —— 第 1 层：精确命中清单（碧蓝航线主力）——
+        var EXACT_OPEN = [
+          'ParamMouthOpenY',
+          'PARAM_MOUTH_OPEN_Y',
+          'sdParamMouthOpenY',
+          'ParamMouthOpenSD',
+          'ParamMouthOpenYSD',
+          'ParamMouthOpenY_SD',
+          'ParamMouthOpen',
+          'MouthOpenY',
+          'MouthOpen',
+          'MouthOpenAuto',
+          'ParamELMouthOpen',
+          'ParamELMouthAutoOpen',
+          'ParamYZMouthOpen',
+          'ParamSlysMouthOpen',
+          'ParamCatMouthOpen',
+          'ParamBMouthOpen',
+          'ParamMao2MouthOpen',
+          'ParamMao1IdleMouthOpen',
+        ];
+        for (var li = 0; li < EXACT_OPEN.length; li++) {
+          for (var ii = 0; ii < ids.length; ii++) {
+            if (String(ids[ii]) === EXACT_OPEN[li]) {
+              _mouthParamIds.open = EXACT_OPEN[li];
+              break;
+            }
+          }
+          if (_mouthParamIds.open) break;
+        }
+
+        // —— 第 2 层：含 mouthopen 子串，排除形状词 ——
+        if (!_mouthParamIds.open) {
+          var cand2 = [];
+          for (var i = 0; i < ids.length; i++) {
+            var raw = String(ids[i] || '');
+            var n = normOf(raw);
+            if (n.indexOf('mouthopen') < 0) continue;
+            if (n.indexOf('mouthform') >= 0) continue;  // mouthform 子串会误命中
+            var banned = false;
+            for (var bi = 0; bi < SHAPE_BAN.length; bi++) {
+              if (n.indexOf(SHAPE_BAN[bi]) >= 0) { banned = true; break; }
+            }
+            if (!banned) cand2.push(raw);
+          }
+          _mouthParamIds.open = pickCleanest(cand2);
+        }
+
+        // —— 第 3 层：宽松 mouth/lip + open，仍排除形状词 ——
+        if (!_mouthParamIds.open) {
+          var cand3 = [];
+          for (var j = 0; j < ids.length; j++) {
+            var raw2 = String(ids[j] || '');
+            var n2 = normOf(raw2);
+            var hasMouth = n2.indexOf('mouth') >= 0 || n2.indexOf('lip') >= 0;
+            var hasOpen  = n2.indexOf('open') >= 0;
+            if (!(hasMouth && hasOpen)) continue;
+            var banned2 = false;
+            for (var bj = 0; bj < SHAPE_BAN.length; bj++) {
+              if (n2.indexOf(SHAPE_BAN[bj]) >= 0) { banned2 = true; break; }
+            }
+            if (!banned2) cand3.push(raw2);
+          }
+          _mouthParamIds.open = pickCleanest(cand3);
+        }
+
+        console.log('[mouthLock] 参数总数=' + ids.length
+                    + ' | 选中 mouth.open="' + _mouthParamIds.open + '"');
+        if (!_mouthParamIds.open) {
+          // 探测失败：把所有 mouth/lip 相关参数列出来帮排查
+          var allMouth = [];
+          for (var k = 0; k < ids.length; k++) {
+            var nk = String(ids[k] || '').toLowerCase();
+            if (nk.indexOf('mouth') >= 0 || nk.indexOf('lip') >= 0) {
+              allMouth.push(ids[k]);
+            }
+          }
+          console.log('[mouthLock] ⚠ 未找到开合参数！所有 mouth/lip 参数:', allMouth);
+        }
+      } catch (e) {
+        console.log('[mouthLock] 探测异常:', e);
+        _mouthParamIds.open = '';
+      }
+    }
+
+    // ============ 配音口型锁 ============
+    // 模型自带 motion 和内置动画都会写 ParamMouthOpenY/Form；TTS 口型若只靠 setParams，
+    // 会在下一次模型 update 被动作覆盖，看起来像动作在假唱。这里在 coreModel.update
+    // 计算顶点之前强制写回 TTS 值，确保配音期间嘴巴只跟人声。
+    // hold=true：配音结束后如果“显式动作”还在继续，嘴巴保持闭合；
+    // 动作结束（含进入原生 idle 呼吸微动作）自动释放，避免永久闭嘴。
+    function _applyMouthLock() {
+      if (!_mouthLock || !model || !model.internalModel || !model.internalModel.coreModel) return;
+      var explicitMotion = _isMotionPlaying() && !_isIdleMotionPlaying();
+      if (_mouthLock.hold && !explicitMotion && !(_stream && _stream.playing)) {
+        _mouthLock = null;
+        return;
+      }
+      try {
+        var core = model.internalModel.coreModel;
+        if (_mouthParamIds.open) {
+          core.setParameterValueById(_mouthParamIds.open, _mouthLock.open);
+        }
+      } catch (e) { }
+    }
+
+    // 包一层 coreModel.update：动作/物理写完参数后、deformer 计算前压口型。
+    // 不能在 internalModel.update 之后写：那时 core.update 已经算完顶点，
+    // 只改参数不改画面（getParamValues 能看到值变化，但嘴不动）。
+    function _installMouthLock(m) {
+      var im = m && m.internalModel;
+      var core = im && im.coreModel;
+      if (!core || core.__mouthLockPatched || typeof core.update !== 'function') return;
+      core.__mouthLockPatched = true;
+      _resolveMouthParamIds();
+      var origUpdate = core.update;
+      core.update = function () {
+        _applyMouthLock();
+        return origUpdate.apply(this, arguments);
+      };
+    }
+
+    function _onMotionFinish() { _motionDone = true; }
+
+    // stopAllMotions() 在 pixi-live2d 里不一定把 MotionState.currentPriority 归零。
+    // 残留 priority=3 会让下一次 normal 动作被误判成“正在播放其他动作”，表现就是
+    // 明明 stop 过、动画却播不出来。这里只清状态字段，不碰模型参数。
+    function _clearMotionState() {
+      try {
+        var mm = model && model.internalModel && model.internalModel.motionManager;
+        var st = mm && mm.state;
+        if (!st) return;
+        st.currentPriority = 0;
+        st.currentGroup = '';
+        st.currentIndex = 0;
+        st.currentLoop = false;
+      } catch (e) { }
+    }
+
+    // 循环播放：不能在 motionFinish 事件内重播（库在 emit 之后才 state.complete()，
+    // NORMAL 优先级会被 reserve 拒绝），改为轮询标记后重发。
+    function _motionLoopTick() {
+      if (!_motionDone) return;
+      _motionDone = false;
+      if (!_loopState) return;
+      if (!_loopState.loop) { _loopState = null; return; }
+      try { model.motion(_loopState.group, _loopState.index, _loopState.priority); } catch (e) { }
+    }
+
+    // 动作结束后由 MotionManager 自动回落到原生 idle（原生微动作/呼吸）。
+    // ============ 配音（motion3.json 的 Sound 字段）============
+    // 库自带 SoundManager：startMotion 时按 definition.Sound 播放 HTMLAudio。
+    // 默认 config.sound=true / config.motionSync=true；后者会等音频 canplaythrough
+    // 再启动动作 —— 一旦音频被自动播放策略拦截或加载失败，动作会永远停住，
+    // 所以这里关掉 motionSync（动作立即开始，音频就绪后自行播放）。
+    function _soundConfig() {
+      try {
+        return (window.PIXI && PIXI.live2d && PIXI.live2d.config) || null;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function _applySoundConfig() {
+      var c = _soundConfig();
+      if (!c) return;
+      try {
+        c.sound = true;
+        c.motionSync = false;
+      } catch (e) { }
+    }
+
+    function _audioState() {
+      var out = {
+        config_sound: null, motion_sync: null,
+        has_audio: false, playing: false
+      };
+      var c = _soundConfig();
+      if (c) { out.config_sound = !!c.sound; out.motion_sync = !!c.motionSync; }
+      var mm = model && model.internalModel && model.internalModel.motionManager;
+      var a = mm && mm.currentAudio;
+      // 已释放的音频（src 被移除）视为无音频，避免误报
+      if (!a || !a.src) return out;
+      out.has_audio = true;
+      out.src = a.src || '';
+      out.paused = !!a.paused;
+      out.playing = !a.paused && a.currentTime > 0 && !a.ended;
+      out.current_time = Math.round((a.currentTime || 0) * 1000) / 1000;
+      out.duration = a.duration || 0;
+      out.volume = a.volume;
+      out.ready_state = a.readyState;
+      out.error = a.error ? a.error.code : null;
+      if (_fallbackAudio) {
+        out.fallback_src = _fallbackAudio.src || '';
+        out.fallback_playing = !_fallbackAudio.paused && _fallbackAudio.currentTime > 0;
+        out.fallback_error = _fallbackAudio.error ? _fallbackAudio.error.code : null;
+      }
+      return out;
+    }
+
+    // ====== 配音兜底播放 ======
+    // 库按 model3.json 里的 Sound 起 HTMLAudio，但三种情况会「有台词、没声音」：
+    //   ① 路径相对错了 → 404（服务端已尽量修正，这里再兜一层）
+    //   ② 离屏页拿不到用户手势 → 自动播放被拦（Python 侧已关掉该策略）
+    //   ③ stopAllMotions 把 currentAudio 提前清掉
+    // 所以 playMotion 之后 0.32s 检查一次：库的音频没真的在放，就自己按 Sound
+    // 解析出 URL 再播一遍；仍然失败就把原因写进日志，方便定位。
+    var _fallbackAudio = null;
+
+    function _stopFallbackAudio() {
+      if (!_fallbackAudio) return;
+      try { _fallbackAudio.pause(); } catch (e) { }
+      _fallbackAudio = null;
+    }
+
+    function _soundUrl(def) {
+      var s = def && def.Sound;
+      if (!s) return '';
+      if (/^(https?:|data:|blob:)/i.test(s)) return s;
+      var base = String(_modelJsonUrl || '').replace(/[^/]*$/, '');
+      if (!base) return '';
+      try { return new URL(s, base).href; } catch (e) { return base + s; }
+    }
+
+    function _ensureSoundPlaying(def) {
+      if (!def || !def.Sound || !model) return;
+      var c = _soundConfig();
+      if (c && c.sound === false) return;
+      var mm = model.internalModel && model.internalModel.motionManager;
+      var a = mm && mm.currentAudio;
+      // 库的音频已经在放（或已放出一段）就不要再插手，否则会双声
+      if (a && !a.error && (!a.paused || a.currentTime > 0)) return;
+      if (_fallbackAudio) {
+        try { if (!_fallbackAudio.paused && _fallbackAudio.currentTime > 0) return; } catch (e) { }
+      }
+      var url = _soundUrl(def);
+      if (!url) return;
+      _stopFallbackAudio();
+      try {
+        var au = new Audio(url);
+        au.volume = 1;
+        var pr = au.play();
+        if (pr && pr.catch) {
+          pr.catch(function (err) {
+            console.warn('[snd] 播放被拒: ' + url + ' → ' + (err && err.name) + ' ' + (err && err.message));
+          });
+        }
+        _fallbackAudio = au;
+        console.log('[snd] 兜底播放 ' + url);
+      } catch (e) {
+        console.warn('[snd] 兜底播放失败: ' + url + ' → ' + e);
+      }
+    }
+
+    function _setupMotion(m) {
+      try {
+        var mm = m && m.internalModel && m.internalModel.motionManager;
+        if (!mm) return;
+        // pixi-live2d 默认把 autoUpdate 挂到 PIXI.Ticker.shared。这里恢复原生的
+        // autoUpdate（呼吸/眨眼/原生 idle 都依赖它），并在页面启动时显式启动
+        // shared ticker；否则该 ticker 从未 start，原生动作和微动作都会静止。
+        // 动作队列的时间参数由 _installMouthLock 完整转发，不能被截断。
+        // 显式播放动作时 MotionManager 会抢占，不会和下面的参数引擎长期冲突。
+        // 原生 idle 组名在不同模型里可能是 Idle/idle，按 definitions 实际键纠正。
+        try {
+          if (mm.groups) {
+            var _defs = mm.definitions || {};
+            if (_defs['idle']) mm.groups.idle = 'idle';
+            else if (_defs['Idle']) mm.groups.idle = 'Idle';
+          }
+        } catch (e) { }
+        mm.on('motionFinish', _onMotionFinish);
+      } catch (e) { }
+    }
+
+    function motionGroupsOf() {
+      var mm = model && model.internalModel && model.internalModel.motionManager;
+      return (mm && mm.definitions) || {};
+    }
+
+    // motion3 文件名 → 动画名：motions/touch_head.motion3.json → touch_head
+    function _motionBaseName(file) {
+      var s = String(file || '').replace(/\\/g, '/');
+      s = s.split('/').pop() || '';
+      return s.replace(/\.motion3\.json$/i, '')
+              .replace(/\.motion\.json$/i, '')
+              .replace(/\.json$/i, '');
+    }
+
+    function handlePlayMotion(cmd) {
+      if (!model) return { ok: false, error: 'model not loaded' };
+
+      // ① 内置动画预设（参数关键帧，任何模型都能用）
+      if (cmd.builtin) {
+        if (!BUILTIN_ANIM[cmd.builtin]) {
+          return {
+            ok: false, error: '未知内置动画: ' + cmd.builtin,
+            builtin_animations: Object.keys(BUILTIN_ANIM)
+          };
+        }
+        if (_isMotionPlaying()) {
+          try { model.internalModel.motionManager.stopAllMotions(); } catch (e) { }
+        }
+        _loopState = null;
+        _motionDone = false;
+        _stopFallbackAudio();
+        // 配音同播动画：从动作第一帧起就压住模型自带口型，等 TTS 接管
+        if (cmd.lipLock) _mouthLock = { open: 0, hold: true };
+        startBuiltinAnimation(cmd.builtin, !!cmd.loop);
+        return {
+          ok: true, builtin: cmd.builtin, label: BUILTIN_ANIM[cmd.builtin].label,
+          loop: !!cmd.loop, params: BUILTIN_ANIM[cmd.builtin].params,
+          sound: '', has_sound: false, muted: !!cmd.mute
+        };
+      }
+
+      // ② 模型自带动作（model3.json → FileReferences.Motions）
+      var defs = motionGroupsOf();
+      var keys = [];
+      for (var k in defs) {
+        if (Object.prototype.hasOwnProperty.call(defs, k) && (defs[k] || []).length) keys.push(k);
+      }
+      if (!keys.length) {
+        return {
+          ok: false,
+          error: '该模型没有内置动作（model3.json 未定义 Motions），可用内置动画',
+          builtin_animations: Object.keys(BUILTIN_ANIM)
+        };
+      }
+
+      // 动画名优先：list_motions 里的 animations[].name 直接对应 motion3 文件名。
+      // 唯一名称直接匹配；跨组同名时 name 会是「组名/动画名」，空名组用 default 前缀。
+      // 兼容老调用：没给 motionName 时仍按 group/index 走。
+      var group;
+      var index;
+      var motionName = (typeof cmd.motionName === 'string') ? cmd.motionName.trim() : '';
+      if (motionName) {
+        var nameGroup = (typeof cmd.group === 'string') ? cmd.group : null;
+        var slash = motionName.lastIndexOf('/');
+        var baseName = motionName;
+        if (slash >= 0) {
+          var prefix = motionName.slice(0, slash);
+          baseName = motionName.slice(slash + 1);
+          nameGroup = (prefix === 'default') ? '' : prefix;
+        }
+        var matches = [];
+        for (var gi = 0; gi < keys.length; gi++) {
+          var gname = keys[gi];
+          if (nameGroup !== null && gname !== nameGroup) continue;
+          var items = defs[gname] || [];
+          for (var mi = 0; mi < items.length; mi++) {
+            if (_motionBaseName(items[mi].File) === baseName) {
+              matches.push({ group: gname, index: mi });
+            }
+          }
+        }
+        if (!matches.length) {
+          return { ok: false, error: '未找到自带动画: ' + motionName };
+        }
+        var matchGroups = {};
+        for (var mj = 0; mj < matches.length; mj++) {
+          matchGroups[matches[mj].group] = true;
+        }
+        if (Object.keys(matchGroups).length > 1) {
+          return {
+            ok: false,
+            error: '自带动画同名，请用「组名/动画名」指定: ' + baseName,
+            matches: matches.map(function (m) {
+              return (m.group || 'default') + '/' + baseName;
+            })
+          };
+        }
+        // 同组内重复的文件名取第一条即可，它们指向同一个动作语义。
+        group = matches[0].group;
+        index = matches[0].index;
+      } else {
+        // 组名为 "" 是合法写法（碧蓝航线一类模型整个 Motions 就一个空名分组），
+        // 老逻辑用 if(!group) 随机挑组，会把空名组误当成"没指定" → 菜单按索引
+        // 播放时可能串到别的组。这里改成"给了就用给的，没给才随机"。
+        if (typeof cmd.group === 'string') {
+          group = cmd.group;
+        } else {
+          group = keys[Math.floor(Math.random() * keys.length)];
+        }
+        if (!defs[group] || !defs[group].length) {
+          return { ok: false, error: '动作分组不存在或为空: ' + group, groups: keys };
+        }
+        if (cmd.index === undefined || cmd.index === null) {
+          index = Math.floor(Math.random() * defs[group].length);
+        } else {
+          index = parseInt(cmd.index, 10);
+          if (!(index >= 0 && index < defs[group].length)) {
+            return {
+              ok: false,
+              error: '动作索引越界: ' + cmd.index + '（分组 ' + group + ' 共 ' + defs[group].length + ' 个）'
+            };
+          }
+        }
+      }
+      if (!defs[group] || !defs[group].length) {
+        return { ok: false, error: '动作分组不存在或为空: ' + group, groups: keys };
+      }
+      var priority = MotionPriorityJS[cmd.priority];
+      if (priority === undefined) priority = MotionPriorityJS.normal;
+
+      // 配音复用：speak 带同一个 motion_group 时，不要因为“同组同索引”拒绝，
+      // 更不要重播；直接沿用当前正在播放的动作，TTS 只换声音/字幕。
+      // 只有显式 play_animation(priority=force) 才允许中断重放。
+      var playingSameGroup = false;
+      try {
+        if (!_isMotionPlaying()) _clearMotionState();
+        var st0 = model.internalModel.motionManager.state;
+        playingSameGroup = !!(_isMotionPlaying() && st0 && st0.currentGroup === group);
+        if (cmd.reuseSame && playingSameGroup) {
+          var curIndex = st0.currentIndex;
+          var curDef = defs[group][curIndex] || {};
+          if (cmd.lipLock) _mouthLock = { open: 0, hold: true };
+          return {
+            ok: true, reused: true, group: group, index: curIndex,
+            priority: 'reuse', loop: !!cmd.loop,
+            file: curDef.File || '',
+            sound: curDef.Sound || '',
+            has_sound: !!curDef.Sound,
+            muted: !!cmd.mute,
+            total_in_group: defs[group].length
+          };
+        }
+      } catch (e) { }
+
+      // 与库内 MotionState.reserve 一致的预判，给出可读错误（真正启动是异步的）
+      // 注意：库的 reserve 对"同组同索引"无条件拒绝（force 也绕不过），
+      // 所以 force 重播场景要先用 stopAllMotions() 复位状态再启动。
+      var sameMotion = false;
+      try {
+        var st = model.internalModel.motionManager.state;
+        sameMotion = (st.currentGroup === group && st.currentIndex === index);
+        if (sameMotion && priority !== 3) {
+          return { ok: false, error: '同一动作正在播放，如需重播请用 priority=force' };
+        }
+        if (!sameMotion && priority > 0 && priority < 3) {
+          if (priority <= st.currentPriority) {
+            return {
+              ok: false,
+              error: '正在播放其他动作（优先级 ' + st.currentPriority + '），请用 priority=force 打断',
+              current: { group: st.currentGroup, index: st.currentIndex }
+            };
+          }
+        }
+      } catch (e) { }
+
+      // 模型动作播放期间参数引擎会被覆盖 → 先停掉内置动画/流式动画，避免互相拉扯
+      if (_stream.playing) handleStopStream();
+
+      _loopState = { group: group, index: index, priority: priority, loop: !!cmd.loop };
+      _motionDone = false;
+      // 配音同播动作：动作自带的嘴型先锁住，TTS 口型每帧覆盖
+      if (cmd.lipLock) _mouthLock = { open: 0, hold: true };
+      var def = defs[group][index] || {};
+      try {
+        // force 重播同一个动作：库的 reserve 拒绝"同组同索引"，必须先复位状态
+        if (sameMotion) {
+          try { model.internalModel.motionManager.stopAllMotions(); } catch (e) { }
+        }
+        // 单次静音：库里在 startMotion 的同步段读取 config.sound（首个 await 之前），
+        // 所以此处临时关闭再立刻恢复是安全的。
+        var soundWas = _soundConfig() && _soundConfig().sound;
+        if (cmd.mute && _soundConfig()) _soundConfig().sound = false;
+        _stopFallbackAudio();
+        model.motion(group, index, priority);
+        if (cmd.mute && _soundConfig()) _soundConfig().sound = soundWas;
+        // 1.1s 后确认配音真的在放（详见 _ensureSoundPlaying 注释）
+        // 太早查会误判（库异步建 Audio），太晚又救不回开头，1.1s 是实测折中
+        try {
+          var _defSnd = def;
+          setTimeout(function () { try { _ensureSoundPlaying(_defSnd); } catch (e) { } }, 1100);
+        } catch (e) { }
+      } catch (e) {
+        if (cmd.mute && _soundConfig()) _soundConfig().sound = soundWas;
+        _loopState = null;
+        return { ok: false, error: String(e) };
+      }
+      return {
+        ok: true, group: group, index: index,
+        priority: cmd.priority || 'normal', loop: !!cmd.loop,
+        file: def.File || '',
+        sound: def.Sound || '',
+        has_sound: !!def.Sound,
+        muted: !!cmd.mute,
+        total_in_group: defs[group].length
+      };
+    }
+
+    function handleStopMotion(cmd) {
+      _loopState = null;
+      _motionDone = false;
+      _stopFallbackAudio();
+      var stoppedBuiltin = false;
+      if (model) {
+        try { model.internalModel.motionManager.stopAllMotions(); } catch (e) { }
+        _clearMotionState();
+      }
+      if (_stream.playing && _stream.kind === 'builtin') {
+        handleStopStream();
+        stoppedBuiltin = true;
+      }
+      return { ok: true, stopped_motion: true, stopped_builtin_anim: stoppedBuiltin };
+    }
+
+    function handleSetExpression(cmd) {
+      if (!model) return { ok: false, error: 'model not loaded' };
+
+      // ⓪ 复位：清空内置预设 + 复位模型自带表情
+      if (cmd.clear || cmd.name === 'none' || cmd.name === 'default' || cmd.name === 'clear') {
+        clearBuiltinExpression();
+        try {
+          var em0 = model.internalModel.motionManager.expressionManager;
+          if (em0) em0.resetExpression();
+        } catch (e) { }
+        _activeExprName = null;
+        return { ok: true, cleared: true };
+      }
+
+      // ① 内置表情预设
+      if (cmd.builtin) {
+        if (!applyBuiltinExpression(cmd.builtin)) {
+          return {
+            ok: false, error: '未知内置表情: ' + cmd.builtin,
+            builtin_expressions: Object.keys(BUILTIN_EXPR)
+          };
+        }
+        return { ok: true, builtin: cmd.builtin, label: BUILTIN_EXPR[cmd.builtin].label };
+      }
+
+      // ② 模型自带表情（model3.json → FileReferences.Expressions）
+      var em = model.internalModel.motionManager.expressionManager;
+      var edefs = (em && em.definitions) || [];
+      if (!edefs.length) {
+        return {
+          ok: false, error: '该模型没有内置表情，可用内置预设',
+          builtin_expressions: Object.keys(BUILTIN_EXPR)
+        };
+      }
+      var idx = -1;
+      if (cmd.name !== undefined && cmd.name !== null && cmd.name !== '') {
+        for (var i = 0; i < edefs.length; i++) {
+          if (edefs[i].Name === cmd.name) { idx = i; break; }
+        }
+        if (idx < 0) {
+          var names = [];
+          for (var j = 0; j < edefs.length; j++) names.push({ index: j, name: edefs[j].Name });
+          return { ok: false, error: '表情不存在: ' + cmd.name, expressions: names };
+        }
+      } else {
+        idx = parseInt(cmd.index, 10);
+        if (!(idx >= 0 && idx < edefs.length)) {
+          return { ok: false, error: '表情索引越界: ' + cmd.index };
+        }
+      }
+      clearBuiltinExpression();
+      try { model.expression(idx); } catch (e) { return { ok: false, error: String(e) }; }
+      _activeExprName = edefs[idx].Name;
+      return { ok: true, index: idx, name: _activeExprName };
+    }
+
+    // 诊断：采样最近一帧原始缓冲，确认画面非空 + 像素是否为预乘 alpha
+    //（预乘时任何通道都 ≤ alpha；若 R>A 说明需要换非预乘格式）
+    function _frameStats() {
+      var out = { ok: false };
+      if (!_pixBuf || !_pixW || !_pixH) {
+        if (!app) return out;
+        var wh = _canvasSize();
+        return { ok: false, w: wh[0], h: wh[1], buf: !!_pixBuf };
+      }
+      var n = _pixBuf.length / 4;
+      var step = Math.max(1, Math.floor(n / 20000));
+      var nonZero = 0, sampled = 0, violate = 0, maxA = 0;
+      for (var i = 0; i < n; i += step) {
+        var r = _pixBuf[i * 4], g = _pixBuf[i * 4 + 1],
+          b = _pixBuf[i * 4 + 2], a = _pixBuf[i * 4 + 3];
+        sampled++;
+        if (a > 0) nonZero++;
+        if (a > maxA) maxA = a;
+        if (r > a + 2 || g > a + 2 || b > a + 2) violate++;
+      }
+      // 4×4 网格平均 alpha（诊断"画面被整块不透明内容填满"的情况）
+      var gw = _pixW >> 2, gh = _pixH >> 2, grid = [];
+      for (var gy = 0; gy < 4; gy++) {
+        for (var gx = 0; gx < 4; gx++) {
+          var cx = gx * gw + (gw >> 1), cy = gy * gh + (gh >> 1);
+          var idx = ((cy * _pixW) + cx) * 4;
+          grid.push(_pixBuf[idx + 3]);
+        }
+      }
+      return {
+        ok: true, w: _pixW, h: _pixH, sampled: sampled,
+        crop: _crop.valid ? { x: _crop.x, y: _crop.y, w: _crop.w, h: _crop.h, touch: !!_crop.touch } : null,
+        canvas: _canvasSize().join('x'),
+        crop_ratio: _crop.valid
+          ? (_crop.w * _crop.h) / Math.max(1, _canvasSize()[0] * _canvasSize()[1])
+          : 1,
+        opaque_ratio: sampled ? nonZero / sampled : 0,
+        max_alpha: maxA, premul_violations: violate,
+        alpha_grid: grid
+      };
+    }
+
+    function buildAssets() {      var out = { motions: [], expressions: [], hasMotions: false, hasExpressions: false };
+      if (!model || !model.internalModel) return out;
+      var mm = model.internalModel.motionManager;
+      var defs = (mm && mm.definitions) || {};
+      for (var g in defs) {
+        if (!Object.prototype.hasOwnProperty.call(defs, g)) continue;
+        var arr = defs[g] || [];
+        if (!arr.length) continue;
+        var files = [];
+        var sflags = [];
+        var snames = [];
+        var texts = [];
+        var soundCount = 0;
+        for (var i = 0; i < arr.length; i++) {
+          var mdef = arr[i] || {};
+          files.push(mdef.File || '');
+          // 逐个动作标注是否带配音（右键菜单据此加 ♪ 标记）
+          if (mdef.Sound) {
+            soundCount++;
+            sflags.push(true);
+            snames.push(String(mdef.Sound).split('/').pop());
+          } else {
+            sflags.push(false);
+            snames.push('');
+          }
+          texts.push(mdef.Text || '');   // 台词（部分模型带，菜单里当提示用）
+        }
+        out.motions.push({
+          group: g, count: arr.length, files: files,
+          sound: sflags, sound_files: snames, texts: texts,
+          sound_count: soundCount, has_sound: soundCount > 0
+        });
+      }
+      var em = mm && mm.expressionManager;
+      var ed = (em && em.definitions) || [];
+      for (var j = 0; j < ed.length; j++) {
+        out.expressions.push({ index: j, name: ed[j].Name || ('expression_' + j) });
+      }
+      out.hasMotions = out.motions.length > 0;
+      out.hasExpressions = out.expressions.length > 0;
+      return out;
+    }
+
+    function handleGetAssets() {
+      var a = buildAssets();
+      var anims = [], exprs = [];
+      for (var k in BUILTIN_ANIM) {
+        anims.push({ id: k, label: BUILTIN_ANIM[k].label });
+      }
+      for (var k2 in BUILTIN_EXPR) {
+        exprs.push({ id: k2, label: BUILTIN_EXPR[k2].label });
+      }
+      var total = 0, soundTotal = 0;
+      for (var i = 0; i < a.motions.length; i++) {
+        total += a.motions[i].count;
+        soundTotal += (a.motions[i].sound_count || 0);
+      }
+      return {
+        model: _modelJsonUrl,
+        model_loaded: !!model,
+        model_ready: !!model && !!_modelReady,
+        switch_busy: !!_switchBusy,
+        last_switch_error: _lastSwitchError || '',
+        motions: a.motions,
+        expressions: a.expressions,
+        motion_groups: a.motions.length,
+        motion_total: total,
+        sound_total: soundTotal,
+        has_sound: soundTotal > 0,
+        has_motions: a.hasMotions,
+        has_expressions: a.hasExpressions,
+        builtin_animations: anims,
+        builtin_expressions: exprs,
+        motion_playing: _isMotionPlaying(),
+        active_expression: _presetName || _activeExprName || null,
+        current_motion: _loopState
+          ? { group: _loopState.group, index: _loopState.index, loop: _loopState.loop }
+          : null,
+        stream_playing: _stream.playing,
+        stream_kind: _stream.kind
+      };
     }
 
     // ============ 命令接收 ============
@@ -312,16 +2346,26 @@
           break;
 
         // —— 布局 ——
+        case 'setLayout':
+          _applyPetLayout(cmd);
+          break;
+
         case 'setPosition':
-          // Python 端移动窗口，模型保持画布居中
-          if (model) {
-            model.x = targetW / 2;
-            model.y = targetH / 2;
-          }
+          // 全屏架构由 setLayout 决定模型位置；旧命令只重算一次，不再居中到整屏。
+          applyFit();
           break;
 
         case 'setScale':
-          // Python 端已调整窗口尺寸，resize 事件会自动重算 fitScale
+          // 缩放由 Python 改 Stage 尺寸后下发 setLayout
+          break;
+
+        // —— 帧推送 ——
+        case 'setFrameEndpoint':
+          setFrameEndpoint(cmd.port, cmd.ftoken);
+          break;
+
+        case 'setPush':
+          setPush(cmd.on);
           break;
 
         // —— 捏脸参数 ——
@@ -332,40 +2376,279 @@
           }
           break;
 
+        // 配音口型锁：TTS 期间/动画继续期间强制覆盖模型自带口型；
+        // hold=true 时只要动作或内置动画还在播，就一直压住嘴巴。
+        case 'mouthLock':
+          if (cmd.on === false) {
+            _mouthLock = null;
+          } else {
+            _mouthLock = {
+              open: Math.max(0, Math.min(1, Number(cmd.open) || 0)),
+              form: Math.max(-1, Math.min(1, Number(cmd.form) || 0)),
+              hold: !!cmd.hold
+            };
+          }
+          _applyMouthLock();
+          break;
+
         case 'getParams':
           if (model && model.internalModel && model.internalModel.coreModel) {
             var core = model.internalModel.coreModel;
             var params = core._model.parameters;
             var ids = params.ids;
             var result = [];
+            // 只回传 name / min / max：当前值(value)与默认值(default)调用方用不到，
+            // 去掉后 IPC 体量大幅下降；null 范围交给 Python 侧省略 range 字段
+            var _r3 = function (v) {
+              if (typeof v !== 'number' || !isFinite(v)) return null;
+              var r = Math.round(v * 1000) / 1000;
+              return r === 0 ? 0 : r;
+            };
             for (var i = 0; i < ids.length; i++) {
               result.push({
                 name: ids[i],
-                value: core.getParameterValueById(ids[i]),
-                min: params.minimumValues ? params.minimumValues[i] : null,
-                max: params.maximumValues ? params.maximumValues[i] : null,
-                default: params.defaultValues ? params.defaultValues[i] : null
+                min: _r3(params.minimumValues ? params.minimumValues[i] : null),
+                max: _r3(params.maximumValues ? params.maximumValues[i] : null)
               });
             }
             return JSON.stringify({ params: result });
           }
           return JSON.stringify({ error: "model not loaded" });
 
-        case 'setExpression':
+        // 采样指定参数的"实际当前值"：排查口型这类逐帧写入是否真的落到模型上
+        case 'getParamValues':
+          if (model && model.internalModel && model.internalModel.coreModel) {
+            var c = model.internalModel.coreModel;
+            var out = {};
+            var has = {};
+            var idxs = {};
+            var names = cmd.names || ['ParamMouthOpenY'];
+            for (var k = 0; k < names.length; k++) {
+              try {
+                var vv = c.getParameterValueById(names[k]);
+                out[names[k]] = Math.round(vv * 1000) / 1000;
+                // getParameterValueById 对不存在的参数也返回默认值 1，
+                // 光看数值判断不了"有没有"，必须查索引（换模型的适配验收靠它）
+                var ix = paramIndex(names[k]);
+                has[names[k]] = (ix >= 0);
+                idxs[names[k]] = ix;
+              } catch (e) { out[names[k]] = null; has[names[k]] = false; idxs[names[k]] = 'err'; }
+            }
+            return JSON.stringify({ values: out, has: has, idx: idxs, t: Math.round(performance.now()) });
+          }
+          return JSON.stringify({ error: "model not loaded" });
+
+
+        // —— 动画 & 表情 ——
+        case 'getAssets':
+          return JSON.stringify(handleGetAssets());
+
+        case 'getFrameStats':
+          return JSON.stringify(_frameStats());
+
+        case 'dumpFrame':
+          // 诊断：导出当前画布 PNG（dataURL）；Python 侧镜像后即可核对实际显示方向
+          try { return app.view.toDataURL('image/png'); } catch (e) { return ''; }
+
+        case 'getDebugInfo':
+          // 诊断：Core 版本 / 画布 / 模型 / drawable 顶点与 UV 是否健康
+          var _info = {
+            core: null, dpr: window.devicePixelRatio,
+            iw: window.innerWidth, ih: window.innerHeight,
+            tw: targetW, th: targetH,
+            busy: _switchBusy, ready: _modelReady, err: _lastSwitchError || '',
+            modelUrl: _modelJsonUrl,
+            vw: 0, vh: 0, rw: 0, rh: 0, res: 0, dbw: 0, dbh: 0,
+            stage: -1, mw: 0, mh: 0, sx: 0, mx: 0, my: 0,
+            baseW: modelBaseW, baseH: modelBaseH,
+            iw2: 0, ih2: 0, draws: -1, nanVerts: -1, uvBad: -1, tex: []
+          };
           try {
-            if (model && model.internalModel && model.internalModel.motionManager) {
-              var em = model.internalModel.motionManager.expressionManager;
-              var defs = em ? (em.definitions || []) : [];
-              if (cmd.index >= 0 && cmd.index < defs.length) {
-                model.expression(defs[cmd.index].name);
+            if (window.Live2DCubismCore && Live2DCubismCore.Version && Live2DCubismCore.Version.csmGetVersion) {
+              _info.core = Live2DCubismCore.Version.csmGetVersion();
+            }
+          } catch (e) { }
+          try {
+            if (app && app.renderer) {
+              _info.vw = app.view.width; _info.vh = app.view.height;
+              _info.rw = app.renderer.width; _info.rh = app.renderer.height;
+              _info.res = app.renderer.resolution;
+              if (app.renderer.gl) {
+                _info.dbw = app.renderer.gl.drawingBufferWidth;
+                _info.dbh = app.renderer.gl.drawingBufferHeight;
+              }
+            }
+            if (app && app.stage) _info.stage = app.stage.children.length;
+          } catch (e) { }
+          try {
+            if (model) {
+              _info.mw = model.width; _info.mh = model.height;
+              _info.sx = model.scale.x; _info.mx = model.x; _info.my = model.y;
+              if (model.internalModel) {
+                _info.iw2 = model.internalModel.width;
+                _info.ih2 = model.internalModel.height;
+              }
+              if (model.textures) {
+                _info.tex = model.textures.map(function (t) {
+                  return t && t.baseTexture ? [t.baseTexture.width, t.baseTexture.height, !!t.valid] : null;
+                });
               }
             }
           } catch (e) { }
-          break;
+          try {
+            if (model && model.internalModel && model.internalModel.coreModel) {
+              var _core = model.internalModel.coreModel;
+              var _n = _core.getDrawableCount();
+              _info.draws = _n;
+              var _nan = 0, _uvBad = 0;
+              for (var _i = 0; _i < _n; _i++) {
+                var _v = null;
+                try { _v = model.internalModel.getDrawableVertices(_i); } catch (e2) { }
+                if (_v) {
+                  for (var _k = 0; _k < _v.length; _k++) {
+                    if (!isFinite(_v[_k])) { _nan++; break; }
+                  }
+                }
+                try {
+                  var _uv = _core.getDrawableVertexUvs(_i);
+                  if (_uv) {
+                    for (var _u = 0; _u < _uv.length; _u++) {
+                      if (!isFinite(_uv[_u]) || _uv[_u] < -0.002 || _uv[_u] > 1.002) { _uvBad++; break; }
+                    }
+                  }
+                } catch (e3) { }
+              }
+              _info.nanVerts = _nan;
+              _info.uvBad = _uvBad;
+            }
+          } catch (e) { }
+          return JSON.stringify(_info);
+
+        case 'pickPart':
+          return JSON.stringify(_pickPart(cmd.nx, cmd.ny));
+
+        case 'swayState':
+          return JSON.stringify(_swayState(cmd));
+
+        case 'probeParams': {
+          // 诊断：给参数写一个值，强制更新一帧，比较网格顶点哈希 —— 证明这个模型的
+          // 骨架真的绑了这个参数（只是参数存在、但没绑部件的话，写了也不会动）。
+          try {
+            var core = model.internalModel.coreModel;
+            var vhash = function () {
+              var n = 0, s = 0;
+              try {
+                var cnt = core.getDrawableCount();
+                for (var i = 0; i < cnt; i++) {
+                  var v = core.getDrawableVertexPositions(i);
+                  if (!v || !v.length) continue;
+                  for (var k = 0; k < v.length; k += 7) { s += v[k]; }
+                  n++;
+                }
+              } catch (e) { }
+              return { n: n, s: Math.round(s * 100) / 100 };
+            };
+            var res = { before: vhash(), items: [] };
+            var arr = cmd.params || [];
+            for (var q = 0; q < arr.length; q++) {
+              var nm = arr[q][0], val = Number(arr[q][1]);
+              var old = getParamValue(nm);
+              applyParam(nm, val);
+              try { model.internalModel.update(0.016, performance.now()); } catch (e) { }
+              res.items.push({ p: nm, v: val, hash: vhash(), old: Math.round(old * 100) / 100 });
+              applyParam(nm, old);
+            }
+            try { model.internalModel.update(0.016, performance.now()); } catch (e) { }
+            res.restored = vhash();
+            return JSON.stringify(res);
+          } catch (e) {
+            return JSON.stringify({ error: String(e) });
+          }
+        }
+
+        case 'hitTestParts':
+          return JSON.stringify(_hitTestParts(cmd.nx, cmd.ny));
+
+        case 'getClickMap':
+          return JSON.stringify(_clickMap(cmd.cols, cmd.rows, cmd.cells));
+
+        case 'partBoxes':
+          return JSON.stringify(_partBoxes(cmd.match || '', !!cmd.detail));
+
+        case 'alphaAt':
+          return JSON.stringify(_alphaAt(cmd.points || []));
+
+        case 'hitBoxes':
+          return JSON.stringify(_hitBoxes(cmd.ids || []));
+
+        case 'hidePart':
+          return JSON.stringify(_hidePart(cmd.partId, cmd.partIndex));
+
+        case 'showAllParts':
+          return JSON.stringify(_showAllParts());
+
+        case 'hideDrawable':
+          return JSON.stringify(_hideDrawable(cmd.drawableIndex));
+        case 'getDrawables':
+          return JSON.stringify(_drawablesInfo());
+        case 'getDrawableMeta':
+          return JSON.stringify(_drawableMeta());
+        case 'autoHideBackground':
+          return JSON.stringify(_autoHideOpaqueBackground(cmd.maxOrder, cmd.minArea));
+
+        case 'showAllDrawables':
+          return JSON.stringify(_showAllDrawables());
+
+        case 'clearHighlight':
+          _clearHighlight();
+          _resetPickCycle();
+          return JSON.stringify({ ok: true });
+
+        case 'playMotion':
+          return JSON.stringify(handlePlayMotion(cmd));
+
+        case 'getAudioState':
+          return JSON.stringify(_audioState());
+
+        case 'setSound':
+          var _sc = _soundConfig();
+          if (_sc) _sc.sound = !!cmd.on;
+          return JSON.stringify({ ok: true, sound: _sc ? !!_sc.sound : null });
+
+        case 'stopMotion':
+          return JSON.stringify(handleStopMotion(cmd));
+
+        case 'setExpression':
+          return JSON.stringify(handleSetExpression(cmd));
+
+        // —— 换装：写入服装参数并锁定（每帧强压，动作/表情改不回去）——
+        case 'applyOutfit':
+          if (cmd.clear) _clearOutfitLock();
+          var _opar = cmd.params || {};
+          for (var _oid in _opar) {
+            var _ov = Number(_opar[_oid]);
+            if (!isFinite(_ov)) continue;
+            _outfitLock[_oid] = _ov;
+            if (cmd.names && cmd.names[_oid]) _outfitNames[_oid] = String(cmd.names[_oid]);
+          }
+          _applyOutfitLock();
+          var _olist = [];
+          for (var _olk in _outfitLock) _olist.push(_olk);
+          return JSON.stringify({ ok: true, locked: _olist, values: _outfitLock });
+
+        // 自检：当前换装锁定表（参数 → 值 / 状态名）
+        case '__outfits__':
+          return JSON.stringify({ ok: true, lock: _outfitLock, names: _outfitNames });
+
+        // 换装改了剪影（裙子/尾巴/鞋子），热区格子必须按新剪影重抓：
+        // 先作废这一帧的 readPixels 缓存，Python 那边再重算点击图。
+        case 'invalidateHitFrame':
+          _invalidateHitFrame();
+          return JSON.stringify({ ok: true });
 
         // —— 流式参数动画 ——
         case 'startStream':
-          handleStartStream(cmd);
+          handleStartStream(cmd, 'stream');
           break;
 
         case 'appendFrames':
@@ -392,48 +2675,1199 @@
               y: Math.round(model.y - model.height / 2),
               w: Math.round(model.width),
               h: Math.round(model.height),
+              cw: Math.round(_directMode ? window.innerWidth : app.view.width),
+              ch: Math.round(_directMode ? window.innerHeight : app.view.height),
               fallback: false
             });
           }
           return JSON.stringify({ fallback: true, w: targetW, h: targetH });
 
+        case 'getAlphaMask':
+          return JSON.stringify(_alphaMask(cmd.cols, cmd.rows));
+
         // —— 模型切换（就地替换，不重载页面）——
         case 'switchModel':
           if (cmd.modelUrl && window.PIXI && PIXI.live2d) {
-            // 立即清空舞台：加载期间只显示加载泡泡，不残留旧模型
-            if (app && app.stage) {
-              try { app.stage.removeChildren(); } catch (e) { }
-            }
-            PIXI.live2d.Live2DModel.from(cmd.modelUrl)
-              .then(function (nm) {
-                // 停止流式动画（旧模型的参数对新模型无意义）
-                handleStopStream();
-                _tweenStates = {};
-                _trackTargets = {};
-                _trackActive = false;
-                _trackLastTime = 0;
-                // 移除旧模型
-                if (model) {
-                  try { model.destroy({ children: true }); } catch (e) { }
+            // 每次切换分配序号：并发/连点切换时只保留最后一次，过期结果直接销毁丢弃
+            var seq = ++_switchSeq;
+            var modelUrl = cmd.modelUrl;
+            // 切换期间暂停帧推送：避免清空舞台后的空白帧被推送出去
+            _switchBusy = true;
+            _modelReady = false;
+            _lastSwitchError = "";
+            // 兜底：模型加载卡住（网络/资源异常）时不能无限停在「加载中」
+            setTimeout(function () {
+              if (seq !== _switchSeq || !_switchBusy) return;
+              _switchBusy = false;
+              _modelReady = false;
+              _lastSwitchError = '模型加载超时';
+              if (window.bridge) {
+                if (window.bridge.notifyModelError) {
+                  try { window.bridge.notifyModelError(_lastSwitchError); } catch (e) { }
                 }
-                model = nm;
-                model.anchor.set(0.5, 0.5);
-                modelBaseW = model.width / (model.scale.x || 1);
-                modelBaseH = model.height / (model.scale.y || 1);
-                applyFit();
-                app.stage.addChild(model);
-                try { model.internalModel.motionManager.stopAllMotions(); } catch (e) { }
-                // 通知 Python 端：切换完成，隐藏加载泡泡
-                if (window.bridge) window.bridge.notifyModelReady();
-              })
-              .catch(function (err) {
-                console.error('switchModel failed:', err);
-                if (window.bridge) window.bridge.notifyModelReady();
-              });
+              }
+            }, 15000);
+            // 停止参数动画（旧模型的参数对新模型无意义）
+            handleStopStream();
+            _tweenStates = {};
+            _trackTargets = {};
+            _trackActive = false;
+            _trackLastTime = 0;
+            // 立即摘除并销毁旧模型：舞台立刻干净，杜绝新旧模型同屏/旧状态污染
+            disposeCurrentModel();
+            try {
+              // 仅诊断：打印当前 WebGL 能力和 pixi-live2d 默认配置（不修改）
+              _diagnoseConfig(modelUrl, app);
+              PIXI.live2d.Live2DModel.from(modelUrl, { autoInteract: false })
+                .then(function (nm) {
+                  // 过期结果（期间又发起了新的切换）：销毁丢弃，不碰舞台
+                  if (seq !== _switchSeq) {
+                    var staleUrls = _modelTextureUrls(nm);
+                    try { nm.destroy({ children: true }); } catch (e) { }
+                    _releaseTextures(staleUrls);
+                    return;
+                  }
+                  try { nm.autoInteract = false; } catch (e) { }
+                  model = nm;
+                  resetParamInfo();      // 换模型 → 参数索引/范围缓存失效必须重建
+                  _modelJsonUrl = modelUrl;
+                  model.anchor.set(0.5, 0.5);
+                  model.scale.set(1);
+                  var base = measureModelBase(model);
+                  modelBaseW = base[0];
+                  modelBaseH = base[1];
+                  applyFit();
+                  _cropReset();
+                  // 保留模型自带背景：不再自动隐藏底层大面积部件。
+                  // 透明窗现在按模型包围盒裁剪，背景只会在模型窗口内出现，不会铺满全屏。
+                  _partNames();          // 顺手把部件名（cdi3）先拉一次，双击判定用
+                  _partNamesAsync();
+                  app.stage.addChild(model);
+                  try { _swayInit(); } catch (e) { }
+                  // 停止内置待机动作 + 禁止自动重播（否则会覆盖捏脸/跟随参数）
+                  try { model.internalModel.motionManager.stopAllMotions(); } catch (e) { }
+                  _installDrawHook(model);
+                  _setupMotion(model);
+                  // 就地换模型（switchModel 老路径）也要清掉上一套换装
+                  _clearOutfitLock();
+                  // 先渲染一帧完整画面，再恢复帧推送（避免空白帧闪动）
+                  _switchBusy = false;
+                  _modelReady = true;
+                  _loadRetry = 0;
+                  _lastSwitchError = '';
+                  _renderNow();
+                  if (window.bridge) window.bridge.notifyModelReady();
+                })
+                .catch(function (err) {
+                  console.error('switchModel failed:', err);
+                  if (seq !== _switchSeq) return;
+                  // 失败：保持状态一致（舞台为空、model 置空），避免后续误用已销毁模型
+                  _switchBusy = false;
+                  _modelReady = false;
+                  _lastSwitchError = String(err && err.message ? err.message : err);
+                  model = null;
+                  modelBaseW = 0;
+                  modelBaseH = 0;
+                  if (_retryLoad(modelUrl)) return;   // 先自动重建重试，别急着报错
+                  if (window.bridge && window.bridge.notifyModelError) {
+                    try { window.bridge.notifyModelError(_lastSwitchError); } catch (e) { }
+                  }
+                });
+            } catch (e) {
+              // 同步异常兜底：必须恢复帧推送，否则画面会永久停在空白帧
+              console.error('switchModel threw:', e);
+              _switchBusy = false;
+              _modelReady = false;
+              _lastSwitchError = String(e && e.message ? e.message : e);
+              model = null;
+              modelBaseW = 0;
+              modelBaseH = 0;
+              if (_retryLoad(modelUrl)) return;
+              if (window.bridge && window.bridge.notifyModelError) {
+                try { window.bridge.notifyModelError(_lastSwitchError); } catch (e2) { }
+              }
+            }
           }
           break;
       }
     };
+
+    // ============ 选中部件轮廓高亮 ============
+    function _ensureHighlightGfx() {
+      if (!app || !app.stage) return null;
+      if (!_highlightGfx) {
+        try { _highlightGfx = new PIXI.Graphics(); } catch (e) { _highlightGfx = null; return null; }
+      }
+      if (!_highlightGfx.parent) {
+        try { app.stage.addChild(_highlightGfx); } catch (e) { }
+      }
+      return _highlightGfx;
+    }
+
+    function _clearHighlight() {
+      _highlight.active = false;
+      _highlight.partIndex = -1;
+      _highlight.drawableIndex = -1;
+      var g = _highlightGfx;
+      _highlightGfx = null;
+      if (g) {
+        try {
+          g.clear();
+          if (g.parent) g.parent.removeChild(g);
+        } catch (e) { }
+        try { g.destroy(); } catch (e) { }
+      }
+    }
+
+    function _setHighlight(partIndex, drawableIndex) {
+      _highlight.active = true;
+      _highlight.partIndex = (typeof partIndex === 'number' ? partIndex : -1);
+      _highlight.drawableIndex = (typeof drawableIndex === 'number' ? drawableIndex : -1);
+    }
+
+    function _updateHighlight() {
+      if (!_highlight.active || !model || !model.internalModel) return;
+      var gfx = _ensureHighlightGfx();
+      if (!gfx) return;
+      var core = model.internalModel.coreModel;
+      // 跟随模型当前世界变换（位置/缩放/动画）
+      try {
+        if (gfx.transform && gfx.transform.setFromMatrix) {
+          gfx.transform.setFromMatrix(model.worldTransform);
+        } else {
+          gfx.position.copyFrom(model.position);
+          gfx.scale.copyFrom(model.scale);
+          gfx.pivot.copyFrom(model.pivot);
+          gfx.rotation = model.rotation;
+          if (gfx.skew && model.skew) gfx.skew.copyFrom(model.skew);
+        }
+      } catch (e) { }
+      var vsx = 1, vsy = 1;
+      try {
+        if (model.internalModel.originalWidth > 0 && modelBaseW > 0) vsx = modelBaseW / model.internalModel.originalWidth;
+        if (model.internalModel.originalHeight > 0 && modelBaseH > 0) vsy = modelBaseH / model.internalModel.originalHeight;
+      } catch (e) { }
+      // 线宽按模型缩放补偿，保证屏幕上约 2px
+      var lw = 2.0 / Math.max(0.02, Math.abs(model.scale.x || 1) * vsx);
+      gfx.clear();
+      gfx.lineStyle(lw, 0x4da3ff, 0.95);
+      gfx.beginFill(0x4da3ff, 0.16);
+
+      var n = core.getDrawableCount();
+      var picked = _highlight.drawableIndex;
+      if (picked < 0 || picked >= n) { gfx.endFill(); return; }
+      var drawn = 0, budget = 8000;
+      for (var i = 0; i < n; i++) {
+        if (i !== picked) continue;
+        var v = null, idx = null;
+        try { v = model.internalModel.getDrawableVertices(i); } catch (e) { continue; }
+        try { idx = core.getDrawableVertexIndices(i); } catch (e) { idx = null; }
+        if (!v || !v.length || !idx || !idx.length) continue;
+        var triCount = Math.floor(idx.length / 3);
+        if (triCount <= 0) continue;
+        if (drawn + triCount > budget && i !== picked) continue;
+        for (var t = 0; t < triCount; t++) {
+          var a = idx[t * 3] * 2, b = idx[t * 3 + 1] * 2, c = idx[t * 3 + 2] * 2;
+          if (a + 1 >= v.length || b + 1 >= v.length || c + 1 >= v.length) continue;
+          var ax = v[a] * vsx, ay = v[a + 1] * vsy;
+          var bx = v[b] * vsx, by = v[b + 1] * vsy;
+          var cx = v[c] * vsx, cy = v[c + 1] * vsy;
+          if (!isFinite(ax) || !isFinite(ay) || !isFinite(bx) || !isFinite(by) ||
+              !isFinite(cx) || !isFinite(cy)) continue;
+          gfx.moveTo(ax, ay);
+          gfx.lineTo(bx, by);
+          gfx.lineTo(cx, cy);
+          gfx.closePath();
+        }
+        drawn += triCount;
+      }
+      gfx.endFill();
+
+      if (!drawn && picked >= 0) {
+        // 兜底：拿不到索引时按 bbox 画外框
+        var pv = null;
+        try { pv = model.internalModel.getDrawableVertices(picked); } catch (e) { }
+        if (pv && pv.length) {
+          var bx0 = 1e9, by0 = 1e9, bx1 = -1e9, by1 = -1e9;
+          for (var k = 0; k < pv.length; k += 2) {
+            var qx = pv[k] * vsx, qy = pv[k + 1] * vsy;
+            if (!isFinite(qx) || !isFinite(qy)) continue;
+            if (qx < bx0) bx0 = qx;
+            if (qx > bx1) bx1 = qx;
+            if (qy < by0) by0 = qy;
+            if (qy > by1) by1 = qy;
+          }
+          if (bx1 > bx0 && by1 > by0) {
+            gfx.lineStyle(lw, 0x4da3ff, 0.95);
+            gfx.beginFill(0x4da3ff, 0.10);
+            gfx.drawRect(bx0, by0, bx1 - bx0, by1 - by0);
+            gfx.endFill();
+          }
+        }
+      }
+    }
+
+    // ============ 按单个网格（drawable）隐藏 ============
+    // Cubism 没有 drawable 级透明度接口，隐藏时把该网格所有顶点折叠到一个点
+    // （零面积三角形不绘制）。顶点每帧会被模型 update 重算，所以必须在
+    // internalModel.draw 之前清零 —— 用绘制钩子保证时序。
+    function _applyHiddenDrawables() {
+      if (!_hiddenDrawables.length) return;
+      var core = model && model.internalModel && model.internalModel.coreModel;
+      if (!core) return;
+      var raw = null;
+      try { raw = core._model.drawables; } catch (e) { raw = null; }
+      if (!raw || !raw.vertexPositions) return;
+      for (var h = 0; h < _hiddenDrawables.length; h++) {
+        var pos = raw.vertexPositions[_hiddenDrawables[h]];
+        if (!pos) continue;
+        for (var k = 0; k < pos.length; k++) pos[k] = 0;
+      }
+    }
+
+    function _installDrawHook(m) {
+      if (!m || !m.internalModel) return;
+      var im = m.internalModel;
+      if (im.__hideDrawHook) return;
+      var origDraw = im.draw;
+      if (typeof origDraw !== 'function') return;
+      im.__hideDrawHook = true;
+      im.draw = function (gl) {
+        _applyHiddenDrawables();
+        return origDraw.call(this, gl);
+      };
+    }
+
+    function _drawableMeta() {
+      if (!model || !model.internalModel || !model.internalModel.coreModel) {
+        return { ok: false, error: 'model not loaded' };
+      }
+      var core = model.internalModel.coreModel;
+      var n = 0;
+      try { n = core.getDrawableCount(); } catch (e) { return { ok: false, error: 'no drawables' }; }
+      var out = [];
+      var parts = {};
+      for (var i = 0; i < n; i++) {
+        var part = _partInfoOfDrawable(i);
+        var pid = part ? part.partId : '';
+        if (pid && !parts[pid]) {
+          var pop = 1;
+          try { pop = core.getPartOpacityByIndex(part.partIndex); } catch (e) { }
+          parts[pid] = { id: pid, index: part.partIndex, op: pop };
+        }
+        out.push({
+          i: i,
+          order: core._model.drawables.renderOrders[i],
+          part: pid,
+          op: core.getDrawableOpacity(i),
+          vis: core.getDrawableDynamicFlagIsVisible(i)
+        });
+      }
+      return { ok: true, count: n, parts: Object.keys(parts).map(function (k) { return parts[k]; }), drawables: out };
+    }
+
+    // 直出模式专用：隐藏「绘制层级最低、且几乎铺满画布」的背景部件。
+    // 只检查最底层 maxOrder 层，避免枚举全部 1000+ 网格；按面积阈值判断，
+    // 不会误伤头发/裙摆这类局部较大的正常部件。
+    function _autoHideOpaqueBackground(maxOrder, minArea) {
+      if (!_directMode || !model || !model.internalModel || !model.internalModel.coreModel) {
+        return { ok: false, error: 'model not ready' };
+      }
+      maxOrder = Math.max(1, parseInt(maxOrder || 10, 10));
+      minArea = Math.max(0.2, parseFloat(minArea || 0.5));
+      var core = model.internalModel.coreModel;
+      var n = 0;
+      try { n = core.getDrawableCount(); } catch (e) { return { ok: false, error: 'no drawables' }; }
+      var hitParts = {}, hidden = [];
+      for (var i = 0; i < n; i++) {
+        var order = 0;
+        try { order = core._model.drawables.renderOrders[i]; } catch (e) { continue; }
+        if (order > maxOrder) continue;
+        try { if (!core.getDrawableDynamicFlagIsVisible(i)) continue; } catch (e) { }
+        try { if (core.getDrawableOpacity(i) <= 0.05) continue; } catch (e) { }
+        var v = null;
+        try { v = model.internalModel.getDrawableVertices(i); } catch (e) { continue; }
+        if (!v || v.length < 6) continue;
+        var x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+        for (var k = 0; k < v.length; k += 2) {
+          var vx = v[k], vy = v[k + 1];
+          if (!isFinite(vx) || !isFinite(vy)) continue;
+          if (vx < x0) x0 = vx; if (vx > x1) x1 = vx;
+          if (vy < y0) y0 = vy; if (vy > y1) y1 = vy;
+        }
+        var area = (x1 - x0) * (y1 - y0);
+        if (!(area >= minArea)) continue;
+        var part = _partInfoOfDrawable(i);
+        if (!part || !part.partId || hitParts[part.partId]) continue;
+        hitParts[part.partId] = true;
+        try {
+          core.setPartOpacityById(part.partId, 0);
+          _hiddenParts.push({ id: part.partId, index: part.partIndex });
+          hidden.push(part.partId);
+        } catch (e) { }
+      }
+      if (hidden.length) _applyHiddenParts();
+      console.log('[autoHideBackground] maxOrder=' + maxOrder + ' minArea=' + minArea +
+                  ' hidden=' + JSON.stringify(hidden));
+      return { ok: true, hidden: hidden, count: hidden.length };
+    }
+
+    function _hideDrawable(drawableIndex) {
+      if (!model || typeof drawableIndex !== 'number' || drawableIndex < 0) {
+        return { ok: false, error: 'bad drawable' };
+      }
+      var idx = Math.floor(drawableIndex);
+      if (_hiddenDrawables.indexOf(idx) < 0) _hiddenDrawables.push(idx);
+      _applyHiddenDrawables();
+      _clearHighlight();
+      return { ok: true, hidden: _hiddenDrawables.length, drawableIndex: idx };
+    }
+
+    function _showAllDrawables() {
+      var n = _hiddenDrawables.length;
+      _hiddenDrawables = [];
+      _hiddenParts = [];
+      _clearHighlight();
+      return { ok: true, restored: n };
+    }
+
+    // 诊断/自动背景裁剪：返回各 drawable 的归一化包围盒、层级、透明度。
+    function _drawablesInfo() {
+      if (!model || !model.internalModel || !model.internalModel.coreModel) {
+        return { ok: false, error: 'model not loaded' };
+      }
+      var core = model.internalModel.coreModel;
+      var n = 0;
+      try { n = core.getDrawableCount(); } catch (e) { return { ok: false, error: 'no drawables' }; }
+      var out = [];
+      for (var i = 0; i < n; i++) {
+        try {
+          var v = model.internalModel.getDrawableVertices(i);
+          if (!v || v.length < 6) continue;
+          var minX = 1e9, minY = 1e9, maxX = -1e9, maxY = -1e9;
+          for (var k = 0; k < v.length; k += 2) {
+            var vx = v[k], vy = v[k + 1];
+            if (!isFinite(vx) || !isFinite(vy)) continue;
+            if (vx < minX) minX = vx; if (vx > maxX) maxX = vx;
+            if (vy < minY) minY = vy; if (vy > maxY) maxY = vy;
+          }
+          if (maxX <= minX || maxY <= minY) continue;
+          var part = _partInfoOfDrawable(i);
+          out.push({
+            i: i,
+            order: core._model.drawables.renderOrders[i],
+            tex: core._model.drawables.textureIndices ? core._model.drawables.textureIndices[i] : -1,
+            part: part ? part.partId : '',
+            partIndex: part ? part.partIndex : -1,
+            op: core.getDrawableOpacity(i),
+            vis: core.getDrawableDynamicFlagIsVisible(i),
+            x0: minX, y0: minY, x1: maxX, y1: maxY,
+            area: (maxX - minX) * (maxY - minY)
+          });
+        } catch (e) { }
+      }
+      out.sort(function (a, b) { return b.area - a.area; });
+      return { ok: true, baseW: modelBaseW, baseH: modelBaseH, count: n, drawables: out.slice(0, 40) };
+    }
+
+    // ============ 部件隐藏（按 Part 隐藏，点击选中 → 确认） ============
+    function _applyHiddenParts() {
+      if (!_hiddenParts.length) return;
+      var core = model && model.internalModel && model.internalModel.coreModel;
+      if (!core) return;
+      for (var i = 0; i < _hiddenParts.length; i++) {
+        try { core.setPartOpacityById(_hiddenParts[i].id, 0); } catch (e) { }
+      }
+    }
+
+    function _partInfoOfDrawable(drawableIndex) {
+      var core = model && model.internalModel && model.internalModel.coreModel;
+      if (!core) return null;
+      var partIndex = -1;
+      try {
+        var raw = core._model || (core.getModel ? core.getModel() : null);
+        if (raw && raw.drawables && raw.drawables.parentPartIndices) {
+          partIndex = raw.drawables.parentPartIndices[drawableIndex];
+        }
+      } catch (e) { }
+      var partId = '';
+      try {
+        if (partIndex >= 0 && core._partIds && core._partIds[partIndex]) {
+          partId = core._partIds[partIndex];
+        }
+      } catch (e) { }
+      if (!partId) {
+        try {
+          var raw2 = core._model || (core.getModel ? core.getModel() : null);
+          if (partIndex >= 0 && raw2 && raw2.parts && raw2.parts.ids) {
+            partId = raw2.parts.ids[partIndex];
+          }
+        } catch (e) { }
+      }
+      return { partIndex: partIndex, partId: partId };
+    }
+
+    // nx/ny: 画布归一化坐标（0~1，与 canvas 同向，不含镜像）
+    // 点在三角形内（含边界）
+    function _pointInTriangle(px, py, ax, ay, bx, by, cx, cy) {
+      var d1 = (px - bx) * (ay - by) - (ax - bx) * (py - by);
+      var d2 = (px - cx) * (by - cy) - (bx - cx) * (py - cy);
+      var d3 = (px - ax) * (cy - ay) - (cx - ax) * (py - ay);
+      var neg = (d1 < 0) || (d2 < 0) || (d3 < 0);
+      var pos = (d1 > 0) || (d2 > 0) || (d3 > 0);
+      return !(neg && pos);
+    }
+
+    // ============ 命中测试（部件隐藏 / 双击部位 共用） ============
+    // 先筛出「可见且有透明度」的 drawable，再按绘制层级从高到低排序。
+    // 排序只决定循环顺序：最上层先选中，同位置继续点则逐层往下。
+    function _hitCandidates() {
+      var core = model.internalModel.coreModel;
+      var n = core.getDrawableCount();
+      var parentPart = null;
+      try { parentPart = core._model.drawables.parentPartIndices; } catch (e) { parentPart = null; }
+      var cand = [];
+      for (var i = 0; i < n; i++) {
+        if (_hiddenDrawables.indexOf(i) >= 0) continue;
+        try { if (!core.getDrawableDynamicFlagIsVisible(i)) continue; } catch (e) { }
+        try { if (core.getDrawableOpacity(i) <= 0.01) continue; } catch (e) { }
+        var pi = parentPart ? parentPart[i] : -1;
+        if (pi >= 0) {
+          // 已被隐藏（Part 不透明度 0）的部件不再参与选中
+          try { if (core.getPartOpacityByIndex(pi) <= 0.01) continue; } catch (e) { }
+        }
+        var order = 0;
+        try { order = core._model.drawables.renderOrders[i]; } catch (e) { }
+        cand.push({ i: i, order: order });
+      }
+      cand.sort(function (a, b) { return b.order - a.order; });
+      return cand;
+    }
+
+    // 逐三角形精确命中（bbox 只做快速排除，避免大包围盒里的透明/镂空区域
+    // 把真正看得见的贴图挡住）。返回命中的 drawable 索引（按层级从高到低）。
+    // first=true 时命中即停（只要最上层那一张），给"热区网格"这类批量探测用。
+    function _hitDrawables(lx, ly, cand, vsx, vsy, first) {
+      var core = model.internalModel.coreModel;
+      var out = [];
+      for (var ci = 0; ci < cand.length; ci++) {
+        var di = cand[ci].i;
+        var v = null, idx = null;
+        try { v = model.internalModel.getDrawableVertices(di); } catch (e) { continue; }
+        try { idx = core.getDrawableVertexIndices(di); } catch (e) { idx = null; }
+        if (!v || v.length < 6 || !idx || idx.length < 3) continue;
+
+        var minX = 1e9, minY = 1e9, maxX = -1e9, maxY = -1e9, bad = false;
+        for (var k = 0; k < v.length; k += 2) {
+          var vx = v[k] * vsx, vy = v[k + 1] * vsy;
+          if (!isFinite(vx) || !isFinite(vy)) { bad = true; break; }
+          if (vx < minX) minX = vx; if (vx > maxX) maxX = vx;
+          if (vy < minY) minY = vy; if (vy > maxY) maxY = vy;
+        }
+        if (bad) continue;
+        if (lx < minX - 1 || lx > maxX + 1) continue;
+        if (ly < minY - 1 || ly > maxY + 1) continue;
+
+        var triCount = Math.floor(idx.length / 3);
+        for (var t = 0; t < triCount; t++) {
+          var a = idx[t * 3] * 2, b = idx[t * 3 + 1] * 2, c = idx[t * 3 + 2] * 2;
+          if (a + 1 >= v.length || b + 1 >= v.length || c + 1 >= v.length) continue;
+          if (_pointInTriangle(lx, ly,
+              v[a] * vsx, v[a + 1] * vsy,
+              v[b] * vsx, v[b + 1] * vsy,
+              v[c] * vsx, v[c + 1] * vsy)) {
+            out.push(di);
+            break;
+          }
+        }
+        if (first && out.length) return out;
+      }
+      return out;
+    }
+
+    function _pickPart(nx, ny) {
+      _clearHighlight();
+      if (!model || !model.internalModel) return { ok: false, error: 'model not loaded' };
+      if (typeof nx !== 'number' || typeof ny !== 'number') return { ok: false, error: 'bad coords' };
+      var core = model.internalModel.coreModel;
+      var screenW = app.renderer.screen.width, screenH = app.renderer.screen.height;
+      var px = Math.max(0, Math.min(1, nx)) * screenW;
+      var py = Math.max(0, Math.min(1, ny)) * screenH;
+      var local = model.toLocal(new PIXI.Point(px, py));
+      var iw = modelBaseW || model.internalModel.width;
+      var ih = modelBaseH || model.internalModel.height;
+      var vsx = 1, vsy = 1;
+      try {
+        if (model.internalModel.originalWidth > 0 && iw > 0) vsx = iw / model.internalModel.originalWidth;
+        if (model.internalModel.originalHeight > 0 && ih > 0) vsy = ih / model.internalModel.originalHeight;
+      } catch (e) { }
+      var cand = _hitCandidates();
+
+      function _collectHits(flipY) {
+        return _hitDrawables(local.x, flipY ? (ih - local.y) : local.y, cand, vsx, vsy);
+      }
+
+
+      // 先按常规朝向取命中；一个都取不到时才用 Y 翻转兜底（部分模型顶点上下颠倒）
+      var hits = _collectHits(false);
+      if (!hits.length) hits = _collectHits(true);
+      if (!hits.length) {
+        _resetPickCycle();
+        return { ok: false, error: '点击位置没有可选的可见部件' };
+      }
+
+      // 同一点重复点击 → 在命中的重叠网格间自上而下循环，底层也能选中；
+      // 换了位置 → 重新从该处最上层开始。
+      var tol = 8;
+      var sameSpot = _pickCycle.list.length === hits.length &&
+        Math.abs(_pickCycle.sx - px) <= tol && Math.abs(_pickCycle.sy - py) <= tol;
+      if (sameSpot) {
+        for (var hi = 0; hi < hits.length; hi++) {
+          if (hits[hi] !== _pickCycle.list[hi]) { sameSpot = false; break; }
+        }
+      }
+      if (sameSpot) {
+        _pickCycle.pos = (_pickCycle.pos + 1) % hits.length;
+      } else {
+        _pickCycle.sx = px;
+        _pickCycle.sy = py;
+        _pickCycle.list = hits.slice();
+        _pickCycle.pos = 0;
+      }
+      var best = hits[_pickCycle.pos];
+
+      // 按单个网格隐藏：即使没有 Part 映射也要能选中（整模型同属一个 Part 时
+      // 按 Part 隐藏会把整个模型藏掉，必须下沉到 drawable 粒度）
+      var info = _partInfoOfDrawable(best) || { partIndex: -1, partId: '' };
+      var drawableId = '';
+      try { drawableId = core.getDrawableId ? core.getDrawableId(best) : ''; } catch (e) { }
+      _setHighlight(info.partIndex, best);
+      return {
+        ok: true, partId: info.partId, partIndex: info.partIndex,
+        drawableIndex: best, drawableId: drawableId,
+        layerCount: hits.length, layerIndex: _pickCycle.pos + 1
+      };
+    }
+
+    // ============ 双击命中：只测试，不选中、不改高亮 ============
+    // 返回该点所有命中的网格 + 部件名（cdi3 里的中文名，用于判断"摸的是哪儿"）。
+    // 部件名取不到（模型没带 DisplayInfo）时 partName 为空，Python 侧会退回
+    // "按可见区域高度分段"的判定，任何模型都能用。
+    var _partNameMap = null;
+
+    function _fillPartNames(di) {
+      if (!di || !di.Parts) return;
+      var m = _partNameMap || {};
+      for (var i = 0; i < di.Parts.length; i++) {
+        m[di.Parts[i].Id] = di.Parts[i].Name;
+      }
+      _partNameMap = m;
+    }
+
+    // 兜底：pixi-live2d 有时不把 cdi3 的 displayInfo 摊到 settings 上（或因
+    // 异步 Promise 还没兑现）。Cubism 4 导出的命名是固定的：
+    // xxx.model3.json ↔ xxx.cdi3.json，直接按同名规则补拉一次，不依赖库实现。
+    var _partNameFetch = { url: '' };
+
+    function _partNamesAsync() {
+      var base = String(_modelJsonUrl || '');
+      if (!base) return;
+      var cdi3 = base.replace(/\.model3\.json(\?.*)?$/i, '.cdi3.json');
+      if (cdi3 === base || _partNameFetch.url === cdi3) return;
+      _partNameFetch.url = cdi3;
+      fetch(cdi3, { cache: 'no-store' }).then(function (r) {
+        if (!r.ok) return null;
+        return r.json();
+      }).then(function (v) {
+        if (v && v.Parts && !Object.keys(_partNameMap || {}).length) _fillPartNames(v);
+      }, function () { });
+    }
+
+    function _partNames() {
+      if (_partNameMap) return _partNameMap;
+      _partNameMap = {};
+      try {
+        var st = model && model.internalModel && model.internalModel.settings;
+        var di = st && (st.displayInfo || st._displayInfo || st.displayInfoJson);
+        if (di && typeof di.then === 'function') {
+          di.then(function (v) { _fillPartNames(v); }, function () { });
+        } else {
+          _fillPartNames(di);
+        }
+      } catch (e) { }
+      return _partNameMap;
+    }
+
+    function _hitTestParts(nx, ny) {
+      if (!model || !model.internalModel) return { ok: false, error: 'model not loaded' };
+      if (typeof nx !== 'number' || typeof ny !== 'number') return { ok: false, error: 'bad coords' };
+      var core = model.internalModel.coreModel;
+      var screenW = app.renderer.screen.width, screenH = app.renderer.screen.height;
+      var px = Math.max(0, Math.min(1, nx)) * screenW;
+      var py = Math.max(0, Math.min(1, ny)) * screenH;
+      var local = model.toLocal(new PIXI.Point(px, py));
+      var iw = modelBaseW || model.internalModel.width;
+      var ih = modelBaseH || model.internalModel.height;
+      var vsx = 1, vsy = 1;
+      try {
+        if (model.internalModel.originalWidth > 0 && iw > 0) vsx = iw / model.internalModel.originalWidth;
+        if (model.internalModel.originalHeight > 0 && ih > 0) vsy = ih / model.internalModel.originalHeight;
+      } catch (e) { }
+      var cand = _hitCandidates();
+      var hits = _hitDrawables(local.x, local.y, cand, vsx, vsy);
+      if (!hits.length) hits = _hitDrawables(local.x, ih - local.y, cand, vsx, vsy);
+      var names = _partNames();
+      _partNamesAsync();       // 名字还没就绪就先补拉 cdi3，下次双击就有精确部位名
+      var parts = [];
+      for (var i = 0; i < hits.length && i < 12; i++) {
+        var di = hits[i];
+        var info = _partInfoOfDrawable(di) || { partIndex: -1, partId: '' };
+        var drawableId = '';
+        try { drawableId = core.getDrawableId ? core.getDrawableId(di) : ''; } catch (e) { }
+        parts.push({
+          drawableIndex: di,
+          drawableId: drawableId,
+          partId: info.partId,
+          partName: names[info.partId] || ''
+        });
+      }
+      return { ok: parts.length > 0, parts: parts, count: parts.length };
+    }
+
+    // ============ 部件包围盒（自检） ============
+    // 按部件（Part）汇总其所有 drawable 顶点在世界坐标里的包围盒，换算成
+    // 画布归一化坐标（0~1，与双击热区的 nx/ny 同一套坐标）。
+    // 用途：不少模型包里作者会放一个"触碰框"部件画定可交互范围 —— 拿它核对
+    // 自动铺的双击热区是否落在作者设计的交互区内；match 为部件名/Id 子串过滤。
+    function _partBoxes(match, detail) {
+      if (!model || !model.internalModel) return { ok: false, error: 'model not loaded' };
+      var core = model.internalModel.coreModel;
+      var iw = modelBaseW || model.internalModel.width;
+      var ih = modelBaseH || model.internalModel.height;
+      var vsx = 1, vsy = 1;
+      try {
+        if (model.internalModel.originalWidth > 0 && iw > 0) vsx = iw / model.internalModel.originalWidth;
+        if (model.internalModel.originalHeight > 0 && ih > 0) vsy = ih / model.internalModel.originalHeight;
+      } catch (e) { }
+      var scrW = app.renderer.screen.width, scrH = app.renderer.screen.height;
+      var names = _partNames();
+      _partNamesAsync();
+      var nDraw = core.getDrawableCount();
+      var parentPart = null;
+      try { parentPart = core._model.drawables.parentPartIndices; } catch (e) { parentPart = null; }
+      var partIds = null;
+      try { partIds = core._partIds || null; } catch (e) { partIds = null; }
+      var acc = {};
+      var perDraw = {};
+      for (var i = 0; i < nDraw; i++) {
+        var pi = parentPart ? parentPart[i] : -1;
+        var v = null;
+        try { v = model.internalModel.getDrawableVertices(i); } catch (e) { continue; }
+        if (!v || v.length < 2) continue;
+        var b = acc[pi] || (acc[pi] = { n: 0, x0: 1e9, y0: 1e9, x1: -1e9, y1: -1e9 });
+        var d0 = { i: i, x0: 1e9, y0: 1e9, x1: -1e9, y1: -1e9 };
+        for (var k = 0; k < v.length; k += 2) {
+          var vx = v[k] * vsx, vy = v[k + 1] * vsy;
+          if (!isFinite(vx) || !isFinite(vy)) continue;
+          // 顶点 → 屏幕：模型的 position/scale 都要算进去，否则和 nx/ny 对不上
+          var g = model.toGlobal(new PIXI.Point(vx, vy));
+          var sx = g.x / scrW, sy = g.y / scrH;
+          if (!isFinite(sx) || !isFinite(sy)) continue;
+          if (sx < b.x0) b.x0 = sx;
+          if (sx > b.x1) b.x1 = sx;
+          if (sy < b.y0) b.y0 = sy;
+          if (sy > b.y1) b.y1 = sy;
+          if (sx < d0.x0) d0.x0 = sx;
+          if (sx > d0.x1) d0.x1 = sx;
+          if (sy < d0.y0) d0.y0 = sy;
+          if (sy > d0.y1) d0.y1 = sy;
+        }
+        b.n++;
+        if (detail) {
+          try { d0.vis = core.getDrawableDynamicFlagIsVisible(i) ? 1 : 0; } catch (e) { d0.vis = -1; }
+          try { d0.opac = core.getDrawableOpacity(i); } catch (e) { d0.opac = -1; }
+          (perDraw[pi] = perDraw[pi] || []).push(d0);
+        }
+      }
+      var key2 = String(match || '');
+      var out = [];
+      for (var kk in acc) {
+        var pidx = parseInt(kk, 10);
+        var bb = acc[kk];
+        var pid = '';
+        try { if (partIds && partIds[pidx]) pid = partIds[pidx]; } catch (e) { }
+        var nm = names[pid] || '';
+        if (key2 && String(pid).indexOf(key2) < 0 && String(nm).indexOf(key2) < 0) continue;
+        var op = 1;
+        try { op = core.getPartOpacityByIndex(pidx); } catch (e) { }
+        var one = {
+          partIndex: pidx, partId: pid, partName: nm, drawables: bb.n,
+          nx0: bb.x0, ny0: bb.y0, nx1: bb.x1, ny1: bb.y1,
+          opac: op
+        };
+        if (detail) one.items = perDraw[pidx] || [];
+        out.push(one);
+      }
+      out.sort(function (a, b) { return a.ny0 - b.ny0; });
+      return { ok: true, iw: iw, ih: ih, scrW: scrW, scrH: scrH, parts: out, count: out.length };
+    }
+
+    // model3.json 的 HitAreas.Id 指向的多是 **ArtMesh（drawable）Id**（Cubism 的命中区
+    // 本来就是画出来的网格），少部分模型写的是 Part Id。这里两种都认：
+    // 精确 → 忽略大小写 → 包含匹配，逐个换算成屏幕归一化矩形交给 Python 布点。
+    function _idMatch(arr, id) {
+      if (!arr || !id) return -1;
+      var i, n = arr.length, lo = String(id).toLowerCase();
+      for (i = 0; i < n; i++) if (String(arr[i]) === id) return i;
+      for (i = 0; i < n; i++) if (String(arr[i]).toLowerCase() === lo) return i;
+      for (i = 0; i < n; i++) {
+        var s = String(arr[i]).toLowerCase();
+        if (s && (s.indexOf(lo) >= 0 || lo.indexOf(s) >= 0)) return i;
+      }
+      return -1;
+    }
+
+    function _hitBoxes(ids) {
+      if (!model || !model.internalModel) return { ok: false, error: 'model not loaded' };
+      var core = model.internalModel.coreModel;
+      var iw = modelBaseW || model.internalModel.width;
+      var ih = modelBaseH || model.internalModel.height;
+      var vsx = 1, vsy = 1;
+      try {
+        if (model.internalModel.originalWidth > 0 && iw > 0) vsx = iw / model.internalModel.originalWidth;
+        if (model.internalModel.originalHeight > 0 && ih > 0) vsy = ih / model.internalModel.originalHeight;
+      } catch (e) { }
+      var scrW = app.renderer.screen.width, scrH = app.renderer.screen.height;
+      var nDraw = core.getDrawableCount();
+      var dIds = null;
+      try { dIds = core._drawableIds || null; } catch (e) { dIds = null; }
+      if (!dIds) {
+        try { dIds = core._model.drawables.ids || null; } catch (e) { dIds = null; }
+      }
+      var pIds = null;
+      try { pIds = core._partIds || null; } catch (e) { pIds = null; }
+      if (!pIds) {
+        try { pIds = core._model.parts.ids || null; } catch (e) { pIds = null; }
+      }
+      var names = _partNames();
+      _partNamesAsync();
+      var parentPart = null;
+      try { parentPart = core._model.drawables.parentPartIndices; } catch (e) { parentPart = null; }
+      var db = new Array(nDraw);        // 每个 drawable 自己的屏幕包围盒
+      var pb = {};                      // 每个 Part 汇总的包围盒
+      for (var i = 0; i < nDraw; i++) {
+        var v = null;
+        try { v = model.internalModel.getDrawableVertices(i); } catch (e) { continue; }
+        if (!v || v.length < 2) continue;
+        var d = { x0: 1e9, y0: 1e9, x1: -1e9, y1: -1e9, n: 0 };
+        for (var k = 0; k < v.length; k += 2) {
+          var vx = v[k] * vsx, vy = v[k + 1] * vsy;
+          if (!isFinite(vx) || !isFinite(vy)) continue;
+          var g = model.toGlobal(new PIXI.Point(vx, vy));
+          var sx = g.x / scrW, sy = g.y / scrH;
+          if (!isFinite(sx) || !isFinite(sy)) continue;
+          if (sx < d.x0) d.x0 = sx;
+          if (sx > d.x1) d.x1 = sx;
+          if (sy < d.y0) d.y0 = sy;
+          if (sy > d.y1) d.y1 = sy;
+          d.n++;
+        }
+        if (!d.n) continue;
+        db[i] = d;
+        var pi = parentPart ? parentPart[i] : -1;
+        var b = pb[pi] || (pb[pi] = { x0: 1e9, y0: 1e9, x1: -1e9, y1: -1e9, n: 0 });
+        if (d.x0 < b.x0) b.x0 = d.x0;
+        if (d.y0 < b.y0) b.y0 = d.y0;
+        if (d.x1 > b.x1) b.x1 = d.x1;
+        if (d.y1 > b.y1) b.y1 = d.y1;
+        b.n++;
+      }
+      var regs = [], miss = [];
+      for (var q = 0; q < (ids || []).length; q++) {
+        var spec = ids[q];
+        var hid = String((spec && spec.id) || spec || '');
+        var nm = String((spec && spec.name) || '');
+        if (!hid) continue;
+        var di = _idMatch(dIds, hid), box = null, kind = '';
+        if (di >= 0 && db[di]) { box = db[di]; kind = 'drawable'; }
+        if (!box) {
+          var pj = _idMatch(pIds, hid);
+          if (pj < 0 && nm) pj = _idMatch(names, nm);
+          if (pj >= 0 && pb[pj]) { box = pb[pj]; kind = 'part'; }
+        }
+        if (!box) { miss.push(hid); continue; }
+        var vis = -1, opac = -1;
+        if (kind === 'drawable') {
+          try { vis = core.getDrawableDynamicFlagIsVisible(di) ? 1 : 0; } catch (e) { }
+          try { opac = core.getDrawableOpacity(di); } catch (e) { }
+        }
+        regs.push({
+          id: hid, name: nm, kind: kind,
+          nx0: box.x0, ny0: box.y0, nx1: box.x1, ny1: box.y1,
+          // 区中心（归一化）：网格在该区里一格都没捞到时，用它兜底，
+          // 保证作者画定的交互区至少有一个可用触发点。
+          cx: (box.x0 + box.x1) * 0.5, cy: (box.y0 + box.y1) * 0.5,
+          drawables: box.n, vis: vis, opac: opac
+        });
+      }
+      return { ok: true, iw: iw, ih: ih, scrW: scrW, scrH: scrH, regions: regs, misses: miss };
+    }
+
+
+    // ============ 双击热区地图 ============
+
+    // 画面归一化的 Stage 范围（模型真正被画在里面的那块区域）。
+    // 全屏可见时画布是整块显示器，布景/特效可能一直铺到屏幕边缘；
+    // 只在这块区域里取格子，热区才不会跑到模型之外的空白处。
+    function _stageBand() {
+      var w = window.innerWidth || 1, h = window.innerHeight || 1;
+      var st = _layoutStageLocal();
+      return {
+        x0: Math.max(-0.02, st.x / w),
+        y0: Math.max(-0.02, st.y / h),
+        x1: Math.min(1.02, (st.x + st.w) / w),
+        y1: Math.min(1.02, (st.y + st.h) / h)
+      };
+    }
+
+    function _inBand(nx, ny, band) {
+      return nx >= band.x0 && nx <= band.x1 && ny >= band.y0 && ny <= band.y1;
+    }
+
+    // 鼠标命中区用的范围 = Stage ∪ 模型自身可见包围盒。
+    //
+    // Stage 只是「布局盒」：直出模式 applyFit 只按高度贴合模型，宽度取的是
+    // Stage 宽度，模型比 Stage 宽时就会有一段美术落在 Stage 之外。那段像素
+    // 照样画在屏幕上，命中区却按 Stage 裁掉 → 用户看到的就是
+    // 「明明不是透明的，鼠标却穿透到下面的窗口」。
+    //
+    // 所以取 alpha 剪影 / 单点可见性时用这个更宽的范围；热区网格仍用
+    // _stageBand（热区要贴在角色身上，不能铺到画布外的空白处）。
+    // 保险：模型包围盒远大于 Stage 时（布景/特效铺满整屏）不扩，
+    // 否则整块桌面都会变成可点区域，邻居窗口/桌面点不动。
+    function _hitBand() {
+      var band = _stageBand();
+      try {
+        if (!model) return band;
+        var w = window.innerWidth || 1, h = window.innerHeight || 1;
+        var cw = w, ch = h;
+        var cs = _canvasSize();
+        if (cs && cs[0] > 0 && cs[1] > 0) { cw = cs[0]; ch = cs[1]; }
+        var b = model.getBounds();            // 画布坐标（左上原点）
+        var mx0 = Math.max(0, b.x / cw), my0 = Math.max(0, b.y / ch);
+        var mx1 = Math.min(1, (b.x + b.width) / cw), my1 = Math.min(1, (b.y + b.height) / ch);
+        if (mx1 <= mx0 || my1 <= my0) return band;
+        var sw = Math.max(1e-4, band.x1 - band.x0);
+        var sh = Math.max(1e-4, band.y1 - band.y0);
+        if ((mx1 - mx0) * (my1 - my0) <= sw * sh * 2.5 + 0.02) {
+          return {
+            x0: Math.max(0, Math.min(band.x0, mx0)),
+            y0: Math.max(0, Math.min(band.y0, my0)),
+            x1: Math.min(1, Math.max(band.x1, mx1)),
+            y1: Math.min(1, Math.max(band.y1, my1))
+          };
+        }
+      } catch (e) { }
+      return band;
+    }
+
+    // 只保留"前排"格子：模型自带的布景/底座（渲染层级垫底的大片美术）在 alpha
+    // 上同样不透明，最远点采样会把热区甩到这些背景上 —— 用户看到的就是
+    // "热区铺到空白处、没落在模型身上"。按每格最上层 drawable 的 renderOrder
+    // 取中位数以上的格子；筛得太狠就逐步放宽，保证每个动画仍有可选点。
+    function _frontCells(cells) {
+      if (!cells || cells.length < 12) return cells || [];
+      var orders = [];
+      for (var i = 0; i < cells.length; i++) {
+        var o = cells[i].o;
+        if (typeof o === 'number' && o >= 0) orders.push(o);
+      }
+      if (orders.length < cells.length * 0.6) return cells;   // 层级拿不到就不筛
+      orders.sort(function (a, b) { return a - b; });
+      var levels = [
+        orders[Math.floor(orders.length * 0.5)],
+        orders[Math.floor(orders.length * 0.25)]
+      ];
+      for (var li = 0; li < levels.length; li++) {
+        var lv = levels[li];
+        var kept = [];
+        for (var k = 0; k < cells.length; k++) {
+          var oc = cells[k].o;
+          if (typeof oc !== 'number' || oc < 0 || oc >= lv) kept.push(cells[k]);
+        }
+        if (kept.length >= Math.max(8, Math.ceil(cells.length * 0.25))) return kept;
+      }
+      return cells;
+    }
+
+    // 把"模型可见区域"切成网格，返回每格的中心坐标、不透明度、最上层部件名。
+    // Python 侧据此给**每个动画**分配一个互不重合的触发点（语义明确的按名字归位，
+    // 语义不清的用最远点采样铺开）。网格只取模型身上的格子，点下去必定命中模型。
+    // 双击热区网格：**按 Stage 实际占的屏幕面积**自适应切格，而不是对整块画布
+    // 固定切 18×26。local 模式下 Stage 只有 210×240，而画布是整屏 1920×1080，
+    // 固定 18 列 → 每格 107px，模型只压得住 1~2 列，所有热区就塌成一条竖带
+    // （用户看到的就是"热区停在屏幕固定区域、不在部件上"）。
+    function _clickMap(cols, rows, targetCells) {
+      if (!model || !model.internalModel) return { ok: false, error: 'model not loaded' };
+      var wh = _canvasSize();
+      var cw = wh[0], ch = wh[1];
+      if (!cw || !ch) return { ok: false, error: 'no canvas' };
+      // 每次都抓一帧新的：Stage 缩放/移动后旧缓冲的裁剪偏移已经过期，
+      // 拿旧帧取 alpha 会大量误判成透明（热区于是只剩零星几格可用）。
+      if (!_captureClickFrame()) {
+        if (!_pixBuf || !_pixW || !_pixH) return { ok: false, error: 'no frame buffer yet' };
+      }
+      var pw = _pixW, ph = _pixH;
+      var ox = _crop.valid ? _crop.x : 0, oy = _crop.valid ? _crop.y : 0;
+      var band0 = _stageBand();
+      // 目标格数（默认 900）：格子边长 = sqrt(Stage 面积 / 格数)，
+      // 小 Stage 自然更细，大 Stage 自然更粗，格数总量不变 → 耗时可控。
+      var tgt = Math.max(120, Math.min(2400, parseInt(targetCells, 10) || 900));
+      var bwN = Math.max(0.01, band0.x1 - band0.x0), bhN = Math.max(0.01, band0.y1 - band0.y0);
+      var bpx = bwN * cw, bpy = bhN * ch;
+      var cell = Math.max(5, Math.sqrt((bpx * bpy) / tgt));
+      cols = Math.round(bpx / cell);
+      rows = Math.round(bpy / cell);
+      cols = Math.max(4, Math.min(120, cols));
+      rows = Math.max(4, Math.min(120, rows));
+      var iw = modelBaseW || model.internalModel.width;
+      var ih = modelBaseH || model.internalModel.height;
+      var vsx = 1, vsy = 1;
+      try {
+        if (model.internalModel.originalWidth > 0 && iw > 0) vsx = iw / model.internalModel.originalWidth;
+        if (model.internalModel.originalHeight > 0 && ih > 0) vsy = ih / model.internalModel.originalHeight;
+      } catch (e) { }
+      var cand = _hitCandidates();
+      var coreModel = model.internalModel.coreModel;
+      var names = _partNames();
+      var scrW = app.renderer.screen.width, scrH = app.renderer.screen.height;
+      var t0 = (window.performance && performance.now) ? performance.now() : Date.now();
+      var band = _stageBand();
+      var cells = [];
+      for (var r = 0; r < rows; r++) {
+        for (var c = 0; c < cols; c++) {
+          // 网格铺在 Stage 范围内（band 相对），而不是整块画布
+          var nx = band.x0 + (c + 0.5) * bwN / cols;
+          var ny = band.y0 + (r + 0.5) * bhN / rows;
+          // ⓪ 只在 Stage 范围内取格：全屏可见时布景会铺到屏幕边缘，
+          // 不先圈定 Stage 的话热区会落进模型之外的空白画面。
+          if (!_inBand(nx, ny, band)) continue;
+          // ① 不透明度：canvas 坐标 → 裁剪缓冲坐标（缓冲是自下而上的）
+          var cx = Math.floor(nx * cw) - ox;
+          var ctop = Math.floor(ny * ch) - oy;
+          if (cx < 2 || ctop < 2 || cx >= pw - 2 || ctop >= ph - 2) continue;
+          var by = ph - 1 - ctop;
+          // 取 7×7 五点采样的**最小值**：只有整片都实心的格子才算"实心格"。
+          // 用最大值会把发丝、轮廓边缘的格子也算进来 —— 那种格子模型一动就变透明，
+          // 双击热区会"点不动"（曾经 6 个点里有 1 个踩在头顶发梢上就是这样失效的）。
+          var a = 255;
+          for (var dy = -3; dy <= 3; dy += 3) {
+            for (var dx = -3; dx <= 3; dx += 3) {
+              var px2 = cx + dx, py2 = by + dy;
+              var av = 0;
+              if (px2 >= 0 && py2 >= 0 && px2 < pw && py2 < ph) {
+                av = _pixBuf[(py2 * pw + px2) * 4 + 3];
+              }
+              if (av < a) a = av;
+            }
+          }
+          if (a < 40) continue;            // 透明 / 半透明边缘格：模型之外或不可靠
+          // ② 部位名：世界坐标下取"最上层命中"的那张网格
+          var local = model.toLocal(new PIXI.Point(nx * scrW, ny * scrH));
+          var hit = _hitDrawables(local.x, local.y, cand, vsx, vsy, true);
+          if (!hit.length) hit = _hitDrawables(local.x, ih - local.y, cand, vsx, vsy, true);
+          var pname = '';
+          var order = -1;
+          if (hit.length) {
+            var info = _partInfoOfDrawable(hit[0]);
+            if (info) pname = names[info.partId] || '';
+            try { order = coreModel._model.drawables.renderOrders[hit[0]]; } catch (e) { order = -1; }
+          }
+          cells.push({ x: nx, y: ny, a: a, p: pname, o: order });
+        }
+      }
+      var ms = ((window.performance && performance.now) ? performance.now() : Date.now()) - t0;
+      var raw = cells.length;
+      cells = _frontCells(cells);
+      return {
+        ok: true, cw: cw, ch: ch, cols: cols, rows: rows, cells: cells,
+        cells_raw: raw, band: [band0.x0, band0.y0, band0.x1, band0.y1],
+        cell_px: Math.round(cell * 100) / 100,
+        // 这批格子是按**这一刻**的 Stage 量出来的。Python 侧必须用这个值做
+        // 坐标换算的基准：它要是事后再去读一次 stage_rect()，快速拖动中途
+        // 回包已经晚了十几像素，算出来的命中区就会整块偏移 —— 松手后模型
+        // 看得见却点不到、右键也落到桌面。
+        stage: _stageScreenRect(),
+        ms: Math.round(ms), parts_known: Object.keys(names || {}).length
+      };
+    }
+
+    // 把当前帧的 alpha 降采样成 0/1 网格，供 Qt 交互覆盖层做 setMask。
+    // 只用于“模型外的空白恢复鼠标穿透”，不下发像素、不进入显示链路。
+    function _alphaMask(cols, rows) {
+      if (!_captureClickFrame()) return { ok: false, error: 'no frame buffer yet' };
+      var wh = _canvasSize();
+      var cw = wh[0], ch = wh[1];
+      if (!cw || !ch) return { ok: false, error: 'no canvas' };
+      cols = Math.max(16, Math.min(240, parseInt(cols, 10) || 96));
+      rows = Math.max(16, Math.min(240, parseInt(rows, 10) || 100));
+      var pw = _pixW, ph = _pixH;
+      var ox = _crop.valid ? _crop.x : 0, oy = _crop.valid ? _crop.y : 0;
+      var band = _hitBand();
+      var bits = [];
+      for (var r = 0; r < rows; r++) {
+        var line = '';
+        for (var c = 0; c < cols; c++) {
+          // Stage 以外一律记 0：全屏可见时布景/特效可能铺满屏幕，
+          // 不圈 Stage 会让整个桌面都变成"可点区域"。
+          if (!_inBand((c + 0.5) / cols, (r + 0.5) / rows, band)) {
+            line += '0';
+            continue;
+          }
+          var hit = 0;
+          // 每格采样 5 个点（中心 + 四角内缩），只要任意一点可见就算命中，
+          // 避免把发梢、手指等细长实体误判成透明。
+          for (var sy = 0; sy < 2 && !hit; sy++) {
+            for (var sx = 0; sx < 2 && !hit; sx++) {
+              var nx = (c + (sx ? 0.75 : 0.25)) / cols;
+              var ny = (r + (sy ? 0.75 : 0.25)) / rows;
+              var bx = Math.floor(nx * cw) - ox;
+              var bt = Math.floor(ny * ch) - oy;
+              if (bx < 0 || bt < 0 || bx >= pw || bt >= ph) continue;
+              var alpha = _pixBuf[((ph - 1 - bt) * pw + bx) * 4 + 3];
+              if (alpha >= 24) { hit = 1; break; }
+            }
+          }
+          line += hit ? '1' : '0';
+        }
+        bits.push(line);
+      }
+      return { ok: true, cw: cw, ch: ch, cols: cols, rows: rows, bits: bits,
+               // 同样回传"抓这一帧时的 Stage"：命中区换算的基准必须和帧一致
+               stage: _stageScreenRect() };
+    }
+
+    // ============ 单点采样（自检） ============
+    // 给一组归一化坐标，回每点的裁剪缓冲不透明度 + 最上层部件名。
+    // 用来判断作者画的"触碰框"到底是实心美术，还是一张看不见的引导图。
+    function _alphaAt(points) {
+      if (!_pixBuf || !_pixW || !_pixH) return { ok: false, error: 'no frame buffer yet' };
+      if (!model || !model.internalModel) return { ok: false, error: 'model not loaded' };
+      var wh = _canvasSize();
+      var cw = wh[0], ch = wh[1];
+      var pw = _pixW, ph = _pixH;
+      var ox = _crop.valid ? _crop.x : 0, oy = _crop.valid ? _crop.y : 0;
+      var scrW = app.renderer.screen.width, scrH = app.renderer.screen.height;
+      var iw = modelBaseW || model.internalModel.width;
+      var ih = modelBaseH || model.internalModel.height;
+      var vsx = 1, vsy = 1;
+      try {
+        if (model.internalModel.originalWidth > 0 && iw > 0) vsx = iw / model.internalModel.originalWidth;
+        if (model.internalModel.originalHeight > 0 && ih > 0) vsy = ih / model.internalModel.originalHeight;
+      } catch (e) { }
+      var names = _partNames();
+      var cand = _hitCandidates();
+      var band = _hitBand();
+      var out = [];
+      for (var i = 0; i < (points || []).length; i++) {
+        var pt = points[i] || {};
+        var nx = pt.nx, ny = pt.ny;
+        var cx = Math.floor(nx * cw) - ox;
+        var ctop = Math.floor(ny * ch) - oy;
+        var a = -1;
+        // Stage 之外当作完全透明：双击/命中判定不该认那里的像素。
+        if (_inBand(nx, ny, band) && cx >= 0 && ctop >= 0 && cx < pw && ctop < ph) {
+          a = _pixBuf[((ph - 1 - ctop) * pw + cx) * 4 + 3];
+        }
+        var local = model.toLocal(new PIXI.Point(nx * scrW, ny * scrH));
+        var hit = _hitDrawables(local.x, local.y, cand, vsx, vsy, true);
+        if (!hit.length) hit = _hitDrawables(local.x, ih - local.y, cand, vsx, vsy, true);
+        var pname = '';
+        if (hit.length) {
+          var info = _partInfoOfDrawable(hit[0]);
+          if (info) pname = names[info.partId] || '';
+        }
+        out.push({ nx: nx, ny: ny, a: a, p: pname });
+      }
+      return { ok: true, cw: cw, ch: ch, points: out };
+    }
+
+    function _hidePart(partId, partIndex) {
+      if (!model || !partId) return { ok: false, error: 'model not loaded' };
+      var core = model.internalModel.coreModel;
+      var id = String(partId);
+      var idx = typeof partIndex === 'number' ? partIndex : -1;
+      var exists = false;
+      for (var i = 0; i < _hiddenParts.length; i++) {
+        if (_hiddenParts[i].id === id) { exists = true; break; }
+      }
+      if (!exists) _hiddenParts.push({ id: id, index: idx });
+      try { core.setPartOpacityById(id, 0); } catch (e) { }
+      _applyHiddenParts();
+      _clearHighlight();
+      return { ok: true, hidden: _hiddenParts.length, partId: id };
+    }
+
+    function _showAllParts() {
+      var core = model && model.internalModel && model.internalModel.coreModel;
+      if (core) {
+        for (var i = 0; i < _hiddenParts.length; i++) {
+          try { core.setPartOpacityById(_hiddenParts[i].id, 1); } catch (e) { }
+        }
+      }
+      var n = _hiddenParts.length + _hiddenDrawables.length;
+      _hiddenParts = [];
+      _hiddenDrawables = [];
+      _applyHiddenParts();
+      _clearHighlight();
+      return { ok: true, restored: n };
+    }
+
+    // ============ 每帧驱动：参数引擎 + 动作循环 + 帧推送 ============
+    // 原生 motion 由本页 app.ticker 驱动，不能依赖 PIXI.Ticker.shared。
+    // 注意：不要使用 ticker 回调里的 dt 直接喂 internalModel —— 不同 PIXI 版本
+    // 的单位不一致，会让呼吸/眨眼以 1/16 速度运行；这里统一用本机高精度时间差。
+    var _nativeLastMs = 0;
+    function _nativeMotionTick() {
+      if (!model || !model.internalModel || model.autoUpdate) return;
+      var now = performance.now();
+      var dt = _nativeLastMs ? (now - _nativeLastMs) : 16.7;
+      _nativeLastMs = now;
+      if (!isFinite(dt) || dt < 1 || dt > 100) dt = 16.7;
+      try {
+        model.internalModel.update(dt, now);
+      } catch (e) { }
+    }
+
+    function _paramTick() {
+      // —— ticker 里的参数引擎 ——
+      _ensureOutfitHook();   // 每帧确认换装锁挂在当前模型的 afterMotionUpdate 上
+      _nativeMotionTick();
+      // 部件隐藏必须每帧强制写回（模型/物理可能改 part opacity）
+      _applyHiddenParts();
+      // 换装参数同理：模型 update 会把服装参数改回动作里写死的值，
+      // 这里每帧压回用户选的那套，否则"换完装一播动作就穿回去了"。
+      _applyOutfitLock();
+      // 选中部件的轮廓高亮跟随模型变换/动画
+      _updateHighlight();
+      // 动作（模型自带 motion）在 render 阶段的 internalModel.update 内应用，
+      // 晚于 ticker 回调 → 期间必须让出参数写入权，否则动作与参数互相拉扯抖动。
+      _motionLoopTick();
+      if (_isMotionPlaying() && !_isIdleMotionPlaying()) {
+        // 即使显式动作在播，也要让 TTS 口型锁生效（动作可能自带嘴型）
+        _applyMouthLock();
+        _applyOutfitLock();
+        return;
+      }
+      var now = performance.now();
+      _tweenTick(now);   // 低优先级：setParams 平滑
+      _trackTick(now);   // 中优先级：鼠标跟随（覆盖 tween）
+      _streamTick(now);  // 高优先级：流式 / 内置动画（覆盖以上）
+      _swayTick(now);    // 拖拽惯性：身体/头发/衣物摆动（叠加在上述参数之上）
+      // 最后再压一次口型锁 —— motion/physics/expression 都更完了，确保是最后写入
+      _applyMouthLock();
+      _applyOutfitLock();
+    }
 
     // ============ CDN 等待 + 初始化 ============
     function waitForCDN() {
@@ -444,20 +3878,62 @@
       }
     }
 
-    function startLoad() {
+    // ==== 加载失败自动重试 ====
+    // 现场故障：偶发 PIXI.live2d.Live2DModel.from 直接 reject（"Aborted"：请求被
+    // 中断 / GL 资源分配失败），页面就一直停在空白 —— model 为空、kids:0、
+    // frames:0，ready 永远 false，外部 show 只能干等 75s 报「模型加载超时」。
+    // 整页重建渲染器（新 canvas + 新 WebGL 上下文）后同一份模型通常就能加载，
+    // 所以这里自动重建重试，用户无感；只有全部重试都失败才向 Python 报错。
+    var _loadRetry = 0, _LOAD_RETRY_MAX = 2;
+    function _retryLoad(url) {
+      if (_loadRetry >= _LOAD_RETRY_MAX) return false;
+      _loadRetry++;
+      console.warn('[load] 自动重试 ' + _loadRetry + '/' + _LOAD_RETRY_MAX + '（' + url + '）');
+      setTimeout(function () {
+        try { window.__rebuildRenderer(url); } catch (e) { console.error('[load] retry failed:', e); }
+      }, 800);
+      return true;
+    }
+    function _failLoad(msg, url, bootSeq) {
+      if (bootSeq !== _switchSeq) return;       // 过期加载：结果交给当前这次
+      _modelReady = false;
+      _lastSwitchError = msg;
+      console.error('Live2D load failed:', msg);
+      if (_retryLoad(url)) return;              // 还有重试机会，先不向 Python 报错
+      if (window.bridge && window.bridge.notifyModelError) {
+        try { window.bridge.notifyModelError(msg); } catch (e) { }
+      }
+    }
+
+    function startLoad(optModelUrl) {
       try {
-        var modelUrl = new URLSearchParams(location.search).get('model');
+        var qs = new URLSearchParams(location.search);
+        // 首次加载用 query 里的 model；切换模型时由 __rebuildRenderer 显式传入新 URL
+        var modelUrl = optModelUrl || qs.get('model');
+        _modelJsonUrl = modelUrl || '';
+        _directMode = qs.get('direct') === '1';
+        // 首帧就用 Python 传来的 Stage/Clip，避免模型先按整屏适配再跳回来。
+        var _qStage = _parseRect(qs.get('stage'), null);
+        var _qClip = _parseRect(qs.get('clip'), null);
+        if (_qStage) _layoutStage = _qStage;
+        _layoutMode = (qs.get('clipMode') === 'full') ? 'full' : 'local';
+        _layoutClip = _qClip || ((_layoutMode === 'full')
+          ? { x: 0, y: 0, w: window.innerWidth, h: window.innerHeight }
+          : _layoutStage);
+        // Python 侧传入原始帧端点端口（未传则自动回退 PNG dataURL 通道）
+        setFrameEndpoint(qs.get('framePort'), qs.get('ftoken'));
 
         // —— devicePixelRatio 适配 ——
         // PIXI 的 autoDensity + resolution 组合:让 canvas 内部缓冲使用物理像素,
         // CSS 尺寸保持逻辑像素,高 DPI 屏幕上渲染锐利不模糊。
         // antialias:true 开启 WebGL 抗锯齿 —— 消除模型边缘锯齿线。
+        // preserveDrawingBuffer 只在旧回传链路需要；直出模式直接合成上屏，关掉它。
         var dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
 
         app = new PIXI.Application({
           backgroundAlpha: 0,
           autoStart: true,
-          preserveDrawingBuffer: true,
+          preserveDrawingBuffer: !_directMode,
           antialias: true,                    // 关键:开启抗锯齿,消除 Live2D 模型边缘锯齿
           resolution: dpr,                     // 关键:渲染缓冲使用物理像素分辨率
           autoDensity: true,                   // 自动按 resolution 缩放 CSS 尺寸
@@ -465,58 +3941,185 @@
           height: window.innerHeight
         });
         document.body.appendChild(app.view);
-        targetW = app.view.width;
-        targetH = app.view.height;
+        _applyCanvasClip();
+        // 原生 autoUpdate 挂在 PIXI.Ticker.shared 上；PIXI.Application 默认用的是
+        // 自己的 app.ticker，shared 可能从未启动。显式启动它，呼吸/眨眼/原生 idle
+        // 以及 motionManager 的原生更新才会按帧运行。
+        try { if (PIXI.Ticker && PIXI.Ticker.shared) PIXI.Ticker.shared.start(); } catch (e) { }
+        // 上下文丢失 / 恢复监听：丢失后必须丢弃所有 GPU 资源引用 → 整页重建
+        app.view.addEventListener('webglcontextlost', function (ev) {
+          try { ev.preventDefault(); } catch (e) { }
+          _onContextLost('event');
+        }, false);
+        app.view.addEventListener('webglcontextrestored', function () {
+          console.warn('[gl] context restored（仍需重建模型，由 reload 兜底）');
+          if (!_glLost) _glLost = true;
+        }, false);
+        // 直出模式用 CSS 逻辑尺寸定模型高度：PIXI 的 view.width 是物理像素，
+        // 直接用它会让同一窗口在 125%/150% DPI 下显示成不同大小。
+        targetW = _directMode ? window.innerWidth : app.view.width;
+        targetH = _directMode ? window.innerHeight : app.view.height;
 
-        window.addEventListener('resize', function () {
-          // resize 时保持 resolution 不变,只改逻辑尺寸
-          app.renderer.resize(window.innerWidth, window.innerHeight);
-          targetW = app.view.width;
-          targetH = app.view.height;
-          // 画布尺寸变化后重新适配模型(用原始尺寸计算,不会叠加放大)
-          applyFit();
-        });
+        // 配音：开启声音、关掉 motionSync（否则音频加载失败会让动作永远不开始）
+        _applySoundConfig();
 
-        PIXI.live2d.Live2DModel.from(modelUrl)
+        // resize 监听全局只绑一次：切换模型会换掉 app，回调里必须读「当前」app
+        if (!window.__resizeBound) {
+          window.__resizeBound = true;
+          window.addEventListener('resize', function () {
+            if (!app || !app.renderer) return;
+            // 直出模式由 syncViewportNow 统一处理；这里也调一次，
+            // 保证 resize 事件到达的同一轮就完成画布/模型对齐。
+            syncViewportNow();
+            if (!_directMode) {
+              app.renderer.resize(window.innerWidth, window.innerHeight);
+              targetW = app.view.width;
+              targetH = app.view.height;
+              applyFit();
+            }
+          });
+        }
+
+        // 参数引擎：默认优先级，早于 app.render（PIXI 用 LOW 优先级渲染）
+        // 每帧先同步视口，再跑参数/动作，保证本帧就是新窗口尺寸下的正确位置。
+        app.ticker.add(function () { syncViewportNow(); _paramTick(); });
+        // 帧推送：比渲染更低优先级 → 同一帧内读到的就是刚渲染好的画面（少一帧延迟）
+        if (!_directMode) app.ticker.add(function () { _pushTick(); }, null, -50);
+
+        // 初始加载也有自己的序号：若加载期间用户已切换模型，初始模型必须丢弃，
+        // 否则它会在切换完成后才 addChild，与新模型同屏 → 部件乱排。
+        var bootSeq = _switchSeq;
+        // 加载看门狗：20s 还没就绪就当失败处理（走重试）——不能让页面无限停在
+        // 空白态，否则外部 show 会一直等到 75s 超时，用户看到的是「命令一直运行中」。
+        var _loadGuard = setTimeout(function () {
+          if (bootSeq !== _switchSeq || _modelReady) return;
+          _failLoad('模型加载超时', modelUrl, bootSeq);
+        }, 20000);
+        // 仅诊断：打印当前 WebGL 能力和 pixi-live2d 默认配置（不修改）
+        _diagnoseConfig(modelUrl, app);
+        PIXI.live2d.Live2DModel.from(modelUrl, { autoInteract: false })
           .then(function (m) {
+            clearTimeout(_loadGuard);
+            if (bootSeq !== _switchSeq) {
+              var staleUrls = _modelTextureUrls(m);
+              try { m.destroy({ children: true }); } catch (e) { }
+              _releaseTextures(staleUrls);
+              return;
+            }
+            if (!app || !app.stage) {
+              var staleUrls2 = _modelTextureUrls(m);
+              try { m.destroy({ children: true }); } catch (e) { }
+              _releaseTextures(staleUrls2);
+              return;
+            }
             model = m;
+            _loadRetry = 0;          // 加载成功 → 重试计数归零
+            resetParamInfo();
             model.anchor.set(0.5, 0.5);
-            // 记录原始尺寸（此时 scale 默认 1，除以 scale 以防万一）
-            modelBaseW = model.width / (model.scale.x || 1);
-            modelBaseH = model.height / (model.scale.y || 1);
+            // 记录原始尺寸（优先取 internalModel 布局尺寸，加载完成即可靠）
+            var base = measureModelBase(model);
+            modelBaseW = base[0];
+            modelBaseH = base[1];
             applyFit();
+            _cropReset();
+            // 保留模型自带背景：不再自动隐藏底层大面积部件。
+            _partNames();          // 顺手把部件名（cdi3）先拉一次，双击判定用
+            _partNamesAsync();
             app.stage.addChild(model);
+            try { _swayInit(); } catch (e) { }
 
-            // 停止内置待机动作，避免覆盖捏脸参数
+            // 停止内置待机动作，避免覆盖捏脸参数；并禁止动作结束后自动重播 Idle
             try { model.internalModel.motionManager.stopAllMotions(); } catch (e) { }
+            _installDrawHook(model);
+            _setupMotion(model);
+            _installMouthLock(model);
+            // 新模型 = 服装参数全新：旧模型的换装锁定表不能带过来（参数 id 可能撞名）
+            _clearOutfitLock();
 
-            // 双引擎 + 跟随引擎：先 tween（低优先级），后 track（鼠标跟随），最后 stream（高优先级，覆盖前两者）
-            app.ticker.add(function () {
-              var now = performance.now();
-              _tweenTick(now);
-              _trackTick(now);
-              _streamTick(now);
-            });
-
-            // 帧推送：与 PIXI 渲染帧同步
-            app.ticker.add(function () {
-              if (_suspendedFrames) return;  // 调整画布分辨率期间不推空白帧
-              if (window.bridge) {
-                window.bridge.pushFrame(app.view.toDataURL('image/png'));
-              }
-            });
-
+            _modelReady = true;
+            _lastSwitchError = '';
+            // 加载成功 → 若距上次上下文重建已超过 2 分钟，把重建计数清零（正常使用不再累计）
+            try {
+              var _ts = parseFloat(sessionStorage.getItem('glRebuildAt') || '0');
+              if (Date.now() - _ts > 120000) sessionStorage.setItem('glRebuild', '0');
+            } catch (e) { }
             // 通知 Python 端：模型加载完成，隐藏加载泡泡
             if (window.bridge) window.bridge.notifyModelReady();
           })
           .catch(function (err) {
-            console.error('Live2D load failed:', err);
-            if (window.bridge) window.bridge.notifyModelReady();
+            clearTimeout(_loadGuard);
+            _failLoad(String(err && err.message ? err.message : err), modelUrl, bootSeq);
           });
       } catch (e) {
         console.error('PIXI init failed:', e);
       }
     }
+
+    // ==== 切换模型：页面内重建渲染器（不重载文档、不动 Qt 侧对象）====
+    // 两条已验证的死路：
+    // ① 同一 QWebEngineView 里 page.load() 重载：第 2 次起 Chromium 合成器复用已回收的
+    //    shared image（"non-existent mailbox"），画面碎块；
+    // ② 销毁 QWebEngineView / QWebEnginePage 换新页：Qt 在 Qt5Core 里 fail-fast
+    //    直接杀进程（0xc0000409）。
+    // 正确做法：只销毁 WebGL 层的「模型 + pixi Application + canvas」，再用新 canvas
+    // 建全新 WebGL 上下文。Qt 侧一个对象都不动，每次切换 GL 状态都是干净的。
+    // 实验已验证：同一页面连续 6 次重建（含 kalangshitade_2 两次、heitaizi_2）全部正确。
+    function _teardownRenderer() {
+      var oldCv = app ? app.view : null;
+      var oldUrls = _modelTextureUrls(model);
+      try { if (model) model.destroy({ children: true }); } catch (e) { }
+      model = null;
+      // 整页重建会丢 WebGL 上下文：上下文一丢，缓存里的 BaseTexture 全部变成
+      // 指向已释放显存的僵尸对象。若不清缓存，下次加载同一个模型（同一 URL）
+      // 会命中这些僵尸贴图 → 又是碎贴图。趁 GL 还活着先把它们全部销毁。
+      _releaseTextures(oldUrls);
+      try {
+        var cache = PIXI.utils.TextureCache;
+        for (var k in cache) {
+          if (!Object.prototype.hasOwnProperty.call(cache, k)) continue;
+          try { cache[k].destroy(true); } catch (e) { }
+          try { delete cache[k]; } catch (e) { }
+        }
+      } catch (e) { }
+      try {
+        if (app) {
+          var gl = app.renderer && app.renderer.gl;
+          var ext = gl && gl.getExtension('WEBGL_lose_context');
+          if (ext) ext.loseContext();           // 立刻归还纹理/帧缓冲
+          app.destroy(true, { children: true });
+        }
+      } catch (e) { }
+      app = null;
+      try {
+        var cvs = document.querySelectorAll('canvas');
+        for (var i = 0; i < cvs.length; i++) {
+          if (cvs[i].parentNode) cvs[i].parentNode.removeChild(cvs[i]);
+        }
+        if (oldCv && oldCv.parentNode) oldCv.parentNode.removeChild(oldCv);
+      } catch (e) { }
+    }
+
+    window.__rebuildRenderer = function (modelUrl) {
+      try {
+        _intentionalLost = true;            // 接下来主动丢的上下文不要触发整页 reload
+        _switchSeq++;                       // 作废一切在途加载
+        _modelReady = false;
+        _lastSwitchError = '';
+        _suspendedFrames = false;
+        _switchBusy = false;
+        _glLost = false;
+        _teardownRenderer();
+        startLoad(modelUrl);                // 新 canvas + 新 WebGL 上下文 + 加载新模型
+        setTimeout(function () { _intentionalLost = false; }, 1200);
+        return true;
+      } catch (e) {
+        _intentionalLost = false;
+        console.error('[rebuild] failed:', e);
+        _modelReady = false;
+        _lastSwitchError = String(e && e.message ? e.message : e);
+        return false;
+      }
+    };
 
     waitForCDN();
   </script>

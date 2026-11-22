@@ -1,0 +1,19 @@
+{
+  "model_root": "E:/智能体集群工作区/live2d_models",
+  "last_model": "E:/智能体集群工作区/live2d_models\\少女前线\\G36C\\normal.model3.json",
+  "track": true,
+  "sub_pos": [
+    0.6827635412878665,
+    0.5167617997606606
+  ],
+  "scale": 0.6632,
+  "dblclick": true,
+  "anim_loop": false,
+  "display_modes": {
+    "file:///E:/智能体集群工作区/_temp_azurlane/碧蓝航线 Azue Lane/Azue Lane(JP)/shi_2/shi_2.model3.json": "local",
+    "file:///E:/智能体集群工作区/_temp_azurlane/碧蓝航线 Azue Lane/Azue Lane(JP)/shi_3/shi_3.model3.json": "local",
+    "file:///E:/智能体集群工作区/_temp_azurlane/碧蓝航线 Azue Lane/Azue Lane(JP)/siwanshi_3/siwanshi_3.model3.json": "full",
+    "file:///E:/智能体集群工作区/_temp_azurlane/碧蓝航线 Azue Lane/Azue Lane(JP)/beilaosenlin_2/beilaosenlin_2.model3.json": "local",
+    "file:///E:/智能体集群工作区/_temp_azurlane/碧蓝航线 Azue Lane/Azue Lane(JP)/boyixi_2/boyixi_2.model3.json": "full"
+  }
+}

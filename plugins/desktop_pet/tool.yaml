@@ -1,13 +1,54 @@
 identity:
   name: "desktop_pet"
 description: |
-    控制 Live2D 桌宠。四大功能共 15 个操作：
-    1. 窗口控制：show/hide/toggle/close — 显示隐藏关闭
-    2. 布局控制：switch/move/resize/update — 模型切换、位置（归一化坐标 0~1）、缩放（0.3~3.0）
-    3. 捏脸参数：get_params/set_params/express — 先 get_params 查当前模型支持哪些参数，再 set_params 设置（支持 smooth_ms 平滑过渡）
-    4. 流式动画：start_stream/append_frames/stop_stream — 低延迟捏脸动画。用紧凑 JSON 结构：
-       {"interval":"500ms","params":["A","B"],"values":[[v1,v2],[v3,v4]]}
-       start_stream 启动并送首批帧 → append_frames 增量追加 → 最后一帧加 eof=true 让它自停
+  控制 Live2D 桌宠。支持多个模型同屏（上限 6 个，一个模型一个进程）。
+
+  【多模型】
+  - show 每调用一次新开一个模型；已开过的只显示并应用 x/y/scale。
+  - 单个模型操作（move/resize/set_params/express/play_animation/...）用 model_path 定位：
+    可传 model3.json 路径、模型目录，或 list_open_models 的 model_name / model_path，
+    或 list_models 返回的模型名。
+  - 屏幕上只有 1 个模型时可省略 model_path；一个都没有会返回 ok=false, count=0，需先 show；
+    ≥2 个时必须指定，否则返回 error + 候选列表。
+  - close 带 model_path 关这一个，不带关全部；close_all 关全部。
+  - switch 换模型（沿用原位置/缩放/鼠标跟随）；省略 from_model_path 时仅当只有 1 个模型才成立。
+  - list_open_models 返回每个模型的 model_name、model_path（model3.json 绝对路径）、位置/缩放/可见/就绪/帧率/进程号（顶层 count 与 max）。
+  - list_models 读取右键菜单设置的模型目录，只返回模型名（models 字符串数组）；把这些名字原样传给
+    show 的 model_path 即可加载，不需要自己拼路径。
+
+  操作分组：
+  1. 窗口：show/hide/toggle/close/close_all/list_open_models/list_models。hide 只隐藏（仍占内存，show 可恢复），
+     close/close_all 才释放内存。右键菜单也有「关闭」「全部关闭」。
+  2. 布局：switch/move/resize/update（位置为归一化坐标 0~1，缩放 0.3~5.0）。
+  3. 捏脸：get_params/search_params/set_params/express。
+     get_params 参数多时截断并给 next_offset，用 offset/limit 续读；
+     search_params 用 , ; | 、 换行 分隔多个词（空格不分隔，中文别名自带空格）；
+     set_params 支持真实 id / 去 Param 前缀短名 / 中文别名，不认识的列在 unknown；
+     均可加 smooth_ms 平滑。
+  4. 流式动画：start_stream/append_frames/stop_stream（紧凑 JSON，见 stream_data）。
+  5. 动作与表情：list_motions/list_expressions/play_animation/stop_animation。
+     新模型先使用 list_motions/list_expressions 获取可用动画或表情，仅在切换模型后再次获取，不要重复获取。
+     list_motions 返回 animations[] 字符串数组；播放自带动画直接把其中一个字符串传给 motion_name。
+     跨组同名时字符串已写成「组名/动画名」，原样传入即可。
+     模型无自带动作/表情时自动用内置预设（动画 6 个、表情 8 个，任何模型可用）。
+     每次动作命令使用mode="queue"，除非上一个动作不是预期的动作才使用replace
+  6. 配音：set_sound（模型动作自带配音的全局开关）、speak/stop_speak/tts_status/tts_config/tts_setup/tts_unload。
+     speak 同时带 animation（speak 中只能填自带动画名）或 motion_name 时，动作会在开口时一起播放；不要随后再调用 play_animation 重复播放。
+     指定 animation / motion_name 时，text 中不能包含任何 [[...]] 内置动画标记；需要内置动画就省略它们、把标记写进 text。
+     同一动画要配多段台词时：第一段带 motion_name，后续段用 mode="queue" 且不要再带动作参数；
+     插件会复用当前正在播放的动作（返回 motion_reused=true），不会重播、不会返回“同一动作正在播放”。
+     只有明确想重播同一动作时才用 play_animation(priority="force")。
+     多模型：speak/play_animation 默认 wait_others=true（串行排队，等其它模型说完/动作播完再执行）；
+     仅需要两个模型同时说话（如争吵）时才显式用 wait_others=false。
+  7. 自检：preflight（不建窗口，只检查文件与依赖；失败时其他操作会直接返回不可用原因）。
+
+  【加载】插件加载时不做重活，首次调用才初始化并自检。
+  首次 show 先建窗口并最多等 2 秒：返回 model_ready=false / loading=true 表示窗口已出现、模型仍在加载，
+  可用 list_open_models 查 ready，或再调用一次 show；不要让工具调用一直等待。
+
+  【可见性】play_animation/express/start_stream/append_frames 需要模型可见：被 hide 后调用会返回
+  ok=false, visible=false，并提示先 show。其余操作返回体都带 visible；set_params 在隐藏时照常写入。
+
 parameters:
   - name: "action"
     type: string
@@ -18,77 +59,322 @@ parameters:
       - "hide"
       - "toggle"
       - "close"
+      - "close_all"
       - "switch"
+      - "list_open_models"
+      - "list_models"
       - "move"
       - "resize"
       - "update"
       - "get_params"
+      - "search_params"
       - "set_params"
       - "express"
       - "start_stream"
       - "append_frames"
       - "stop_stream"
+      - "list_motions"
+      - "list_expressions"
+      - "play_animation"
+      - "stop_animation"
+      - "set_sound"
+      - "speak"
+      - "stop_speak"
+      - "tts_status"
+      - "tts_unload"
+      - "tts_config"
+      - "tts_setup"
+      - "preflight"
 
   - name: "model_path"
     type: string
     required: false
-    description: "Live2D 模型目录或 model3.json 完整路径（show/switch 时使用）。不指定时默认使用插件自带的符玄模型（desktop_pet/assets/符玄）"
+    description: |
+      目标模型：model3.json 路径、模型目录，或 list_open_models 的 model_name / model_path，
+      或 list_models 返回的模型名。
+      - show：要打开的模型；省略时打开自带符玄模型。
+      - switch：要换成的新模型。
+      - 其他单模型操作：屏幕上 1 个时可省略，≥2 个必须给。
+      - close_all 不需要。
+  - name: "from_model_path"
+    type: string
+    required: false
+    description: "switch 专用：要替换掉的当前模型，可填模型名或文件地址；省略时仅当屏幕上恰好 1 个模型才成立。别名 old_model_path。"
 
   - name: "x"
     type: number
     required: false
-    description: "水平位置，归一化坐标 0.0~1.0（0=最左，1=最右）"
+    description: "水平位置，0.0~1.0（0=最左，1=最右）"
   - name: "y"
     type: number
     required: false
-    description: "垂直位置，归一化坐标 0.0~1.0（0=最上，1=最下）"
+    description: "垂直位置，0.0~1.0（0=最上，1=最下）"
   - name: "dx"
     type: number
     required: false
-    description: "水平增量（update 专用）"
+    description: "update 专用：水平增量"
   - name: "dy"
     type: number
     required: false
-    description: "垂直增量（update 专用）"
+    description: "update 专用：垂直增量"
   - name: "scale"
     type: number
     required: false
-    description: "缩放 0.3~3.0，默认 1.0"
+    description: "缩放 0.3~5.0，默认 1.0（约 700×800 窗口），平滑过渡"
   - name: "dscale"
     type: number
     required: false
-    description: "缩放增量（update 专用）"
+    description: "update 专用：缩放增量"
+
+  - name: "query"
+    type: string
+    required: false
+    description: "search_params 专用：参数关键词，多个用 , ; | 、 换行 分隔（空格不分隔）。可搜中文名、英文名、标准名。"
+  - name: "offset"
+    type: integer
+    required: false
+    description: "get_params 专用：起始下标，默认 0；配合上次返回的 next_offset 续读。"
+  - name: "limit"
+    type: integer
+    required: false
+    description: "get_params：本页条数，省略=剩余全部；search_params：每个词最多返回几条（默认 5，上限 30）。"
 
   - name: "params"
     type: string
     required: false
     description: |
-      捏脸参数 JSON 对象字符串，如 '{"ParamAngleX": 15, "ParamEyeBallX": 0.5}'。
-      常见参数名：ParamAngleX/Y/Z(头部旋转 -30~30), ParamEyeBallX/Y(眼球方向 -1~1),
-      ParamMouthOpenY(嘴巴开合 0~1), ParamBrowLY/RY(眉毛)。
-      先调用 get_params 查看当前模型支持的完整列表。
+      捏脸参数 JSON 字符串，如 '{"ParamAngleX":15,"ParamEyeBallX":0.5}'。
+      键名可用真实 id、短名或中文别名（'{"嘴":0.4}' 等价 '{"MouthOpenY":0.4}'）。
+      常用：ParamAngleX/Y/Z（头旋转 -30~30）、ParamEyeBallX/Y（-1~1）、
+      ParamMouthOpenY（0~1）、ParamBrowLY/RY。先用 get_params 查当前模型支持哪些。
+  - name: "expression"
+    type: string
+    required: false
+    description: |
+      express 专用：模型表情名（先 list_expressions），或内置预设 happy/sad/angry/surprised/shy/think/cry/sleepy，
+      或 "none" 复位。名字不存在时会尝试内置预设。
   - name: "expression_index"
     type: integer
     required: false
-    description: "预设表情索引（express 专用），从 0 开始"
+    description: "express 专用：模型表情索引（从 0 开始）；优先用 expression"
   - name: "smooth_ms"
     type: integer
     required: false
-    description: "平滑过渡时长毫秒，默认 200；0=立即生效"
+    description: "平滑过渡毫秒，默认 200；0=立即生效"
+
+  - name: "animation"
+    type: string
+    required: false
+    description: "play_animation：内置动画预设（nod/shake/tilt/sway/look_around/cheer），任何模型可用。\nspeak：只能填模型自带动画名（与 motion_name 等价），不能填内置动画 id；指定后 text 中不能再包含任何 [[...]] 动画标记，内置动画请改为在 text 里写标记。speak 带自带动画会随配音自动同播，不要再重复调用 play_animation。"
+  - name: "motion_name"
+    type: string
+    required: false
+    description: "自带动画名（play_animation 与 speak 通用）：直接传 list_motions 返回的 animations[] 里的字符串。跨组同名时该字符串会是「组名/动画名」，原样传入即可；不要再拆成组名和索引。speak 中与 animation 等价。"
+  - name: "priority"
+    type: string
+    required: false
+    description: "play_animation 专用：normal（默认，被打断时报错）/ force（强制打断）/ idle（仅空闲时播）"
+  - name: "loop"
+    type: boolean
+    required: false
+    description: "play_animation 专用：true=循环到 stop_animation 或换动作；默认 false 播一遍"
+  - name: "mute"
+    type: boolean
+    required: false
+    description: "play_animation 专用：true=本次不播动作自带配音"
+  - name: "sound"
+    type: boolean
+    required: false
+    description: "set_sound 专用：true=开启动作配音（默认），false=全局静音"
 
   - name: "stream_data"
     type: string
     required: false
     description: |
-      流式参数 JSON 字符串。start_stream 时需完整结构：
+      流式参数 JSON。start_stream 示例：
       '{"interval":"500ms","params":["ParamAngleY","ParamEyeBallX"],"values":[[-10,0],[15,0.3],[0,0]],"repeat":-1}'
-      repeat 字段：-1=无限循环直到 stop_stream；0 或正整数=播放 N 遍后自动停止；默认 0（一遍后停）。
-      interval 格式：整数+ms，如 "500ms"。append_frames 时可省略 params/interval/repeat（沿用上一个 start_stream 的设置）。
+      repeat：-1=循环到 stop_stream；0 或正整数=播 N 遍后停（默认 0）。
+      interval 为"整数+ms"。append_frames 可只给 values，沿用上次设置。
   - name: "values_only"
     type: string
     required: false
-    description: "append_frames 专用，纯 values 数组 JSON，如 '[[1,2],[3,4]]'。比 stream_data 更轻量。"
+    description: "append_frames 专用：纯 values 数组，如 '[[1,2],[3,4]]'"
   - name: "eof"
     type: boolean
     required: false
-    description: "append_frames 专用，标记这是最后一批帧，播放完后自动停止流式动画"
+    description: "append_frames 专用：true=最后一批，播完自动停"
+
+  # ===== 配音 =====
+  - name: "text"
+    type: string
+    required: false
+    description: |
+      speak 专用：要念的台词。长文本会按标点自动切句逐段播放，段间自动补停顿。
+
+      可用停顿符号（不念出来）：`~` 连读（两侧合成一段不留停顿）、`|` 短停 150ms、
+      `||` 中停 300ms、`|||` 长停 500ms。默认标点已够用，只在需要强调节奏时加。
+
+      可用动画标记（念到对应字时触发，不念出来）：
+      `[[nod]]`/`[[点头]]`、`[[shake]]`/`[[摇头]]`、`[[tilt]]`/`[[歪头]]`、
+      `[[sway]]`/`[[摇摆]]`、`[[look_around]]`/`[[张望]]`、`[[cheer]]`/`[[欢呼]]`。
+      例："这个问题问得好。[[nod]]我赞同你的思路。"
+      指定 animation 或 motion_name（播放自带动画）时，text 中不能包含任何 [[...]] 动画标记；
+      需要使用这些动画标记时，不要填 animation / motion_name，直接写在 text 里即可。
+
+      backend=mimo 还支持原生标记：句首 `(风格)`（如 `(慵懒)`、`(东北话)`），句中 `[音频标签]`
+      （如 `[轻笑]`、`[叹气]`）。整句控制优先用 style 参数；换到 local/edge 时会当普通文字念出来，记得去掉。
+
+      日语：MiMo 没有日语支持，和中文同形的汉字会被读成中文。请先把日语汉字转成假名再传，如 日本語→にほんご、今日→きょう。
+  - name: "voice"
+    type: string
+    required: false
+    enum:
+      - "eula_girl"
+      - "eula_bright"
+      - "eula_warm"
+      - "eula_low"
+      - "huayan"
+      - "Serena"
+      - "vivian"
+      - "ono_anna"
+      - "sohee"
+      - "ryan"
+      - "aiden"
+      - "dylan"
+      - "eric"
+      - "uncle_fu"
+      - "zh-CN-XiaoxiaoNeural"
+      - "zh-CN-XiaoyiNeural"
+      - "zh-CN-YunxiNeural"
+      - "zh-CN-YunjianNeural"
+      - "zh-CN-YunyangNeural"
+      - "zh-CN-liaoning-XiaobeiNeural"
+      - "冰糖"
+      - "茉莉"
+      - "苏打"
+      - "白桦"
+      - "Mia"
+      - "Chloe"
+      - "Milo"
+      - "Dean"
+      - "mimo_default"
+    description: |
+      speak 专用：音色，必须与 backend 对应，不能跨后端照抄。
+
+      backend=local：eula_girl（默认，清亮少女）/ eula_bright（明亮元气）/ eula_warm（温柔中音）/
+      eula_low（低沉冷淡）/ huayan（兜底音色，音色较平）。全部为女声。
+
+      backend=edge：女声 zh-CN-XiaoxiaoNeural（默认）/ zh-CN-XiaoyiNeural / zh-CN-liaoning-XiaobeiNeural；
+      男声 zh-CN-YunxiNeural / zh-CN-YunjianNeural / zh-CN-YunyangNeural。
+
+      backend=mimo：女声 冰糖（默认）/ 茉莉；男声 苏打 / 白桦；英文 Mia / Chloe / Milo / Dean；
+      mimo_default = 当前集群默认音色。
+
+      不传 = 该后端默认音色。要完整清单或各后端默认值，用 tts_status（detail=true 给全量）。
+  - name: "backend"
+    type: string
+    required: false
+    enum: ["local", "edge", "mimo", "auto"]
+    description: |
+      speak 专用：local=本地（默认，免联网、免 key）/ edge=微软在线（免 key，需要网络）/
+      mimo=小米 MiMo（音质与风格控制更强，需要 api_key）/ auto=按配置选在线服务商。
+      切换 backend 时 voice 要换成对应命名体系。
+  - name: "api_key"
+    type: string
+    required: false
+    description: |
+      speak 专用（mimo 需要）：小米 MiMo 的 API Key，只对本次有效，不写盘、不回显。
+      不传时依次找 online.mimo.api_key → api_key_file → 环境变量 MIMO_API_KEY；
+      都没有会当场返回 ok=false 并说明缺什么，不会静默换后端。放进工具参数预设即可每次自动带上。
+  - name: "style"
+    type: string
+    required: false
+    description: |
+      speak 专用（仅 mimo）：自然语言表演指令，控制音色质感、情绪、语速节奏、角色感，
+      不会出现在字幕里，也不会被念出来。例："温柔但疲惫，尾音有点上扬"、
+      "二十出头的邻家女孩，说话带点鼻音"、"压抑的愤怒"。
+      唱歌时也可用，控制演唱情绪，不改旋律。local/edge 会忽略此参数。
+  - name: "dialect"
+    type: string
+    required: false
+    enum: ["普通话", "东北话", "四川话", "河南话", "粤语"]
+    description: |
+      speak 专用（仅 mimo）：方言口音，默认普通话。会作为风格标签放在目标文本开头，
+      可与 style、sing 同时使用。例："东北话"、"粤语"。local/edge 会忽略此参数。
+  - name: "sing"
+    type: boolean
+    required: false
+    description: |
+      speak 专用（backend=mimo）：true=唱歌。只有 mimo 支持，其他后端传 true 会被拒绝。
+      默认整曲一次合成，不要自己分句：分几次唱会在接缝处跑调。整首歌词请一次传完。
+      歌词里的换行/句子标点就是字幕的逐句边界（一行一句），多行歌词请保留换行，不要压成一行。
+      长歌词首声会等较久（约 0.3 秒/字，49 字约 15 秒），等待期间桌宠头顶会显示"清嗓酝酿中"
+      进度气泡，并先播背景音与一句说明配音，不必再解释"正在合成"。
+      确需分两次调用时，第二段必须 mode="queue"，否则会覆盖第一段。
+  - name: "detail"
+    type: boolean
+    required: false
+    description: "tts_status 专用：false（默认）只回是否在播/段数/排队数/error；true 才给时间轴、字幕、设备、口型等诊断信息。另会返回工具层排队字段 deferred、deferred_action、deferred_position、deferred_count、deferred_ahead、deferred_since_ms；即使 speaking=false 且 queued=0，只要 deferred=true 就说明命令已受理、正在等其它模型空闲。"
+  - name: "speed"
+    type: number
+    required: false
+    description: "speak 专用：语速倍率 0.5~2.0，1.0=正常（默认）。local 实际有效区间约 0.6~1.6；mimo 为近似控制；要精确变速用 edge。"
+  - name: "bgm"
+    type: string
+    required: false
+    description: |
+      speak 专用：背景音。留空或 "off" = 无。内置：
+      piano/light/轻音乐（默认推荐，钢琴）、ambient/soft/空灵、cafe/lofi/咖啡馆、
+      night/夜晚/忧郁、nature/自然/森林、bright/活泼/轻快/节日、pad（兜底，不推荐）。
+      也可给本地音频路径（wav/mp3/m4a/flac，自动循环）。
+      播放为"早进晚退"：人声前约 1.2s 渐入，结束后约 1.6s 渐出；说话时自动压低。
+  - name: "bgm_volume"
+    type: number
+    required: false
+    description: "speak 专用：背景音音量 0~1 线性增益，默认 0.85；0=无音乐。设 1.0 容易与人声互相压扁，不建议。"
+  - name: "bgm_duck"
+    type: number
+    required: false
+    description: "speak 专用：说话时背景音压低比例 0~1，默认 0.55（越小压得越狠）"
+  - name: "subtitle"
+    type: boolean
+    required: false
+    description: "speak 专用：是否显示字幕，默认 true。只显示当前句并逐字高亮，念完停留约 3 秒再消失。"
+  - name: "lip_sync"
+    type: boolean
+    required: false
+    description: "speak 专用：是否驱动口型，默认 true。"
+  - name: "mode"
+    type: string
+    required: false
+    default: "queue"
+    enum: ["replace", "queue"]
+    description: |
+      speak 专用；省略时默认 queue，其他 action 不需要传。
+      replace（立即打断当前、播新的）/ queue（排队，等当前播完再播，返回 queued 与 position）。
+      唱歌分两段调用时第二段必须用 queue，避免覆盖第一段。
+      同一动画要多段配音时：第一段带 motion_name，后续段用 queue 且省略动作参数；
+      重复带同一动作只会复用当前动作（返回 motion_reused=true），不会重播或中断。
+  - name: "wait"
+    type: number
+    required: false
+    description: |
+      上一个配音（说话或唱歌）结束后再等待的秒数，默认 0，上限 30。
+      - speak：排队到当前整段播完后，再等 N 秒才出下一条的声音；空闲时从调用时刻开始等。
+      - speak 的 wait 由后台定时器延迟出声，工具调用本身立即返回，不阻塞后续命令；
+        只有 blocking=true 时才会等整段念完才返回。
+      - express / play_animation：先等当前配音结束，再等 N 秒执行；当前没有配音时从调用时刻开始等。
+      例：`speak(mode="queue", wait=2)` = 上一句结束后停 2 秒再开口。
+  - name: "wait_others"
+    type: boolean
+    required: false
+    description: |
+      多模型排队（默认 true）：本条命令先不执行，后台等其它模型的配音（说话/唱歌及排队）和显式动画结束后再执行；
+      **工具调用立即返回 accepted，不会阻塞智能体的下一条命令**（返回 deferred=true / waiting_others=true）。
+      默认 true 串行排队；仅需要多个模型同时发声（如争吵场景）时才显式设 false 立即执行。
+      仅 speak / play_animation 支持；屏幕上只有 1 个模型时直接执行（没有其它模型可等，不会再进队列）。
+      等的是其它模型，不是本条命令的目标模型；目标自己的排队用 mode="queue"。
+  - name: "blocking"
+    type: boolean
+    required: false
+    description: "speak 专用：true=等整段念完才返回（阻塞）；默认 false 立即返回。连续发多条配音时应保持 false，否则前一条会占住工具调用；原来的布尔 wait 已改名为 blocking。"

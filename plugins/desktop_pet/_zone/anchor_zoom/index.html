@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>anchor zoom demo</title>
+<style>
+  html, body { margin: 0; width: 100%; height: 100%; overflow: hidden;
+               font: 12px/1.5 "Microsoft YaHei", Consolas, monospace; color: #e8eefc; user-select: none;
+               background: #1a1a2e; }
+  #frame { position: fixed; inset: 0; border: 1px dashed rgba(120,180,255,.55); box-sizing: border-box; pointer-events: none; }
+  #world { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform; }
+  #pet { position: absolute; border-radius: 18px; box-sizing: border-box;
+         background: radial-gradient(circle at 35% 30%, #7fd0ff, #2b6cff 55%, #17307a);
+         border: 2px solid rgba(255,255,255,.6); }
+  .dot { position: absolute; width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 50%;
+         background: #ffd54a; box-shadow: 0 0 6px #ffd54a; pointer-events: none; }
+  #hud { position: fixed; left: 10px; top: 10px; padding: 8px 10px; border-radius: 8px;
+         background: rgba(10,16,30,.78); white-space: pre; pointer-events: none; z-index: 10; }
+  #cross { position: fixed; left: 0; top: 0; width: 22px; height: 22px; margin: -11px 0 0 -11px;
+           pointer-events: none; display: none; z-index: 10; }
+  #cross:before, #cross:after { content: ""; position: absolute; background: #ff5252; }
+  #cross:before { left: 10px; top: 0; width: 2px; height: 22px; }
+  #cross:after { top: 10px; left: 0; height: 2px; width: 22px; }
+</style>
+</head>
+<body>
+  <div id="frame"></div>
+  <div id="world"><div id="pet"></div><div class="dot" id="dot"></div></div>
+  <div id="hud"></div>
+  <div id="cross"></div>
+<script>
+let ipcRenderer = null;
+try { ipcRenderer = require('electron').ipcRenderer; } catch (e) { console.warn('no ipc', e); }
+
+const BASE = 600;
+const MIN_S = 0.4, MAX_S = 3.0;
+
+let mode = 'content';          // 'content' | 'window'
+let s = 1;                      // 倍率（两种模式共用）
+let tx = 0, ty = 0;             // content 模式的平移
+// window 模式：块的屏幕坐标锁死，窗口中心绕锚点缩放
+let blockScreen = null;         // { cx, cy, w, h } —— 块屏幕中心和尺寸（切换模式时定下来就不动）
+
+const world = document.getElementById('world');
+const pet = document.getElementById('pet');
+const hud = document.getElementById('hud');
+const cross = document.getElementById('cross');
+
+function updateHud() {
+  let desc;
+  if (mode === 'content') {
+    desc = '窗口不动，只缩放内容';
+  } else {
+    desc = '块钉在屏幕上不动，窗口变大/缩小去包它';
+  }
+  hud.textContent =
+    `模式: ${mode}  ${desc}\n` +
+    `scale: ${s.toFixed(4)}   窗口: ${innerWidth}x${innerHeight}\n` +
+    `按 W 切换 / 滚轮缩放 / Q 退出`;
+}
+
+function fitContent() {
+  const w = 320, h = 400;
+  pet.style.width = w + 'px';
+  pet.style.height = h + 'px';
+  pet.style.left = (-w / 2) + 'px';
+  pet.style.top = (-h / 2) + 'px';
+}
+
+function layout() {
+  if (mode === 'content') {
+    world.style.transform = `translate(${tx}px, ${ty}px) scale(${s})`;
+  } else {
+    // window 模式：块钉在屏幕上不动
+    world.style.transform = 'none';
+    const w = Math.round(BASE * s * 0.5), h = Math.round(BASE * s * 0.63);
+    pet.style.width = w + 'px';
+    pet.style.height = h + 'px';
+    const leftPx = blockScreen.cx - w / 2 - window.screenX;
+    const topPx  = blockScreen.cy - h / 2 - window.screenY;
+    pet.style.left = leftPx + 'px';
+    pet.style.top  = topPx + 'px';
+  }
+  // 黄色标记点：钉在块中心
+  const r = pet.getBoundingClientRect();
+  const dot = document.getElementById('dot');
+  dot.style.left = (r.left + r.width * 0.5) + 'px';
+  dot.style.top  = (r.top  + r.height * 0.5) + 'px';
+  updateHud();
+}
+
+function initContent() {
+  tx = innerWidth / 2; ty = innerHeight / 2;
+  s = 1;
+  world.style.transformOrigin = '0 0';
+  fitContent();
+  layout();
+}
+
+function initWindow() {
+  s = 1;
+  world.style.transformOrigin = '0 0';
+  // 把块钉在屏幕中心的固定位置（当前窗口的中心）
+  blockScreen = {
+    cx: window.screenX + innerWidth / 2,
+    cy: window.screenY + innerHeight / 2
+  };
+  if (ipcRenderer) {
+    ipcRenderer.send('bounds', {
+      x: window.screenX, y: window.screenY, width: BASE, height: BASE
+    });
+  }
+  setTimeout(layout, 100);
+}
+
+// ---------- 滚轮 ----------
+window.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+  const s2 = Math.max(MIN_S, Math.min(MAX_S, s * factor));
+  if (Math.abs(s2 - s) < 1e-6) return;
+  const r = s2 / s;              // 窗口/块的缩放比
+
+  if (mode === 'content') {
+    // 窗口不动：标准锚点公式，块以鼠标下点为锚点缩放
+    const cx = (e.clientX - tx) / s, cy = (e.clientY - ty) / s;
+    s = s2;
+    tx = e.clientX - cx * s2;
+    ty = e.clientY - cy * s2;
+    layout();
+  } else {
+    if (!ipcRenderer || !blockScreen) return;
+    // window 模式：块钉在屏幕上不动；窗口中心绕鼠标点按 r 缩放
+    // 鼠标点的屏幕绝对坐标
+    const msx = window.screenX + e.clientX;
+    const msy = window.screenY + e.clientY;
+    // 当前窗口中心
+    const wcx = window.screenX + innerWidth / 2;
+    const wcy = window.screenY + innerHeight / 2;
+    // 新窗口中心：绕鼠标点按 r 缩放
+    const wcx2 = msx + (wcx - msx) * r;
+    const wcy2 = msy + (wcy - msy) * r;
+    const w2 = Math.round(BASE * s2), h2 = Math.round(BASE * s2);
+    const nx = Math.round(wcx2 - w2 / 2);
+    const ny = Math.round(wcy2 - h2 / 2);
+    s = s2;
+    ipcRenderer.send('bounds', { x: nx, y: ny, width: w2, height: h2 });
+    requestAnimationFrame(layout);
+  }
+}, { passive: false });
+
+// ---------- 鼠标十字 ----------
+window.addEventListener('mousemove', (e) => {
+  cross.style.display = 'block';
+  cross.style.transform = `translate(${e.clientX}px, ${e.clientY}px)`;
+});
+
+// ---------- 按键 ----------
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'w' || e.key === 'W') {
+    if (mode === 'content') {
+      mode = 'window';
+      initWindow();
+    } else {
+      mode = 'content';
+      initContent();
+    }
+    layout();
+  } else if (e.key === 'q' || e.key === 'Q') {
+    if (ipcRenderer) { try { ipcRenderer.send('quit'); } catch (e) { } }
+    else { window.close(); }
+  }
+});
+
+window.addEventListener('resize', layout);
+initContent();
+</script>
+</body>
+</html>

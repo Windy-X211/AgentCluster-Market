@@ -1,0 +1,15 @@
+# 运行期数据与模型素材不纳入版本库
+__pycache__/
+*.py[cod]
+*.log
+*.log.*
+_tts/
+_tts_env/
+_workers/
+_frames/
+_webengine_profile/
+assets/
+.pytest_cache/
+
+electron_runtime/
+
