@@ -63,21 +63,46 @@ def emit(stage: str, pct: int | None = None, message: str = "") -> None:
 
 
 # ---------------------------------------------------------------- install
+REQUIRED_IMPORTS = "torch, transformers, librosa, soundfile, soxr, einops, onnxruntime, qwen_tts"
+
+
+def venv_healthy() -> tuple[bool, str]:
+    """真实自检（不看 marker）：venv 在 且 关键包能 import。
+
+    marker 只是"曾经装成功过"的缓存，不能当唯一判据——老安装、手工装的 venv
+    没有 marker 但完全可用；反过来装了半截也可能残留 marker。
+    """
+    if not VENV_PY.is_file():
+        return False, "venv 不存在"
+    try:
+        r = subprocess.run([str(VENV_PY), "-c", "import " + REQUIRED_IMPORTS],
+                           capture_output=True, text=True, timeout=180)
+        if r.returncode == 0:
+            return True, "依赖可导入"
+        tail = [ln for ln in (r.stderr or "").strip().splitlines() if ln.strip()]
+        return False, (tail[-1][:160] if tail else "import 失败")
+    except Exception as e:
+        return False, str(e)[:160]
+
+
 def install():
     venv_dir = VENV_PY.parent.parent
     marker = venv_dir / ".setup_ok"
-    if marker.is_file():
-        # 幂等：上次已经装成功过 → 只做一次快速导入自检，通过就直接返回
-        try:
-            r = subprocess.run([str(VENV_PY), "-c", "import qwen_tts, torch, librosa"],
-                               capture_output=True, text=True, timeout=120)
-            if r.returncode == 0:
-                print("私有 venv 已就绪（%s），跳过安装" % venv_dir, flush=True)
-                emit("done", 100, "已就绪，跳过")
-                return
-        except Exception:
-            pass
-        marker.unlink(missing_ok=True)
+
+    healthy, why = venv_healthy()
+    if healthy:
+        # 已经可用：补写 marker（老环境/手工装都没有它），立即返回，不重装 170MB
+        if not marker.is_file():
+            marker.write_text("ok\n", encoding="utf-8")
+            print("私有 venv 已可用，补写标记 %s" % marker, flush=True)
+        else:
+            print("私有 venv 已就绪（%s），跳过安装" % venv_dir, flush=True)
+        emit("done", 100, "已就绪，跳过")
+        return
+
+    marker.unlink(missing_ok=True)
+    print("私有 venv 需要修复：%s" % why, flush=True)
+    emit("check", 2, "自检未通过：" + why)
 
     if not VENV_PY.is_file():
         print("创建 venv: %s" % venv_dir, flush=True)
@@ -93,7 +118,11 @@ def install():
     # qwen-tts 的依赖里 transformers 版本被锁死，这里只装它自己
     run([py, "-m", "pip", "install", "-q", "--no-deps", QWEN_PKG])
 
-    # 只有真正装完才写标记：宿主以 marker 判定"这个资产已就位"
+    # 装完再自检一次：只有真的能 import 才写标记（宿主以 marker 判定"已就位"）
+    healthy, why = venv_healthy()
+    if not healthy:
+        emit("failed", 100, "安装后仍不可用：" + why)
+        raise SystemExit(1)
     marker.write_text("ok\n", encoding="utf-8")
     print("依赖安装完成", flush=True)
     emit("done", 100, "依赖安装完成")

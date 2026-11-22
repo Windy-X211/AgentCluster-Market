@@ -1,12 +1,12 @@
 {
   "version": "1.0",
-  "updated_at": "2026-11-22T16:35:57",
+  "updated_at": "2026-11-22T17:10:04",
   "items": [
     {
       "kind": "plugin",
       "id": "desktop_pet",
       "dir": "plugins/desktop_pet",
-      "updated_at": "2026-11-22T16:35:56",
+      "updated_at": "2026-11-22T17:10:02",
       "version": "0.8.7",
       "author": "Windy-X211",
       "name": "桌宠控制",
