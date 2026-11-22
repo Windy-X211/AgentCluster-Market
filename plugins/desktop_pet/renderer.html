@@ -3725,17 +3725,25 @@
             continue;
           }
           var hit = 0;
-          // 每格采样 5 个点（中心 + 四角内缩），只要任意一点可见就算命中，
-          // 避免把发梢、手指等细长实体误判成透明。
-          for (var sy = 0; sy < 2 && !hit; sy++) {
-            for (var sx = 0; sx < 2 && !hit; sx++) {
-              var nx = (c + (sx ? 0.75 : 0.25)) / cols;
-              var ny = (r + (sy ? 0.75 : 0.25)) / rows;
-              var bx = Math.floor(nx * cw) - ox;
-              var bt = Math.floor(ny * ch) - oy;
-              if (bx < 0 || bt < 0 || bx >= pw || bt >= ph) continue;
-              var alpha = _pixBuf[((ph - 1 - bt) * pw + bx) * 4 + 3];
-              if (alpha >= 24) { hit = 1; break; }
+          // 整格扫描（每 2 像素取一点），只要格内有**任何一个**可见像素就算命中。
+          //
+          // 旧实现只采 4 个角点（0.25/0.75），格子 9.6×6.75px 时对角点之间隔
+          // 5~7px：发梢、耳饰、丝带、裙摆细边这种 1~3px 的实体经常整格漏采，
+          // 于是模型上**看得见**的地方在命中区里是空的 —— 鼠标点上去就穿透到
+          // 下面的窗口。整格扫描保证"可见 ⇒ 命中"，宁可让命中区比剪影粗
+          // 一格（约 10px），也不留这种看不见的洞。
+          var bx0 = Math.floor(c * cw / cols), bx1 = Math.floor((c + 1) * cw / cols);
+          var bt0 = Math.floor(r * ch / rows), bt1 = Math.floor((r + 1) * ch / rows);
+          if (bx1 <= bx0) bx1 = bx0 + 1;
+          if (bt1 <= bt0) bt1 = bt0 + 1;
+          for (var yy = bt0; yy < bt1 && !hit; yy += 2) {
+            var bt = yy - oy;
+            if (bt < 0 || bt >= ph) continue;
+            var rowBase = (ph - 1 - bt) * pw;
+            for (var xx = bx0; xx < bx1; xx += 2) {
+              var bx = xx - ox;
+              if (bx < 0 || bx >= pw) continue;
+              if (_pixBuf[(rowBase + bx) * 4 + 3] >= 24) { hit = 1; break; }
             }
           }
           line += hit ? '1' : '0';

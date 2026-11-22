@@ -1,7 +1,29 @@
 {
   "version": "1.0",
-  "updated_at": "2026-11-22T12:43:13",
+  "updated_at": "2026-11-22T16:35:57",
   "items": [
+    {
+      "kind": "plugin",
+      "id": "desktop_pet",
+      "dir": "plugins/desktop_pet",
+      "updated_at": "2026-11-22T16:35:56",
+      "version": "0.8.7",
+      "author": "Windy-X211",
+      "name": "桌宠控制",
+      "description": "控制 Live2D 桌宠：多模型同屏、显示隐藏、位置缩放、捏脸参数、流式动画、模型动画与表情、动作配音（含唱歌）、鼠标跟随",
+      "icon": "🐱",
+      "tags": [
+        "desktop",
+        "live2d",
+        "pet",
+        "animation",
+        "stream",
+        "motion",
+        "expression",
+        "audio",
+        "multi-model"
+      ]
+    },
     {
       "kind": "extension",
       "id": "visual_interaction",
@@ -34,70 +56,6 @@
         "mindmap",
         "html",
         "layout"
-      ]
-    },
-    {
-      "kind": "plugin",
-      "id": "desktop_pet",
-      "dir": "plugins/desktop_pet",
-      "updated_at": "2026-11-22T10:05:08",
-      "version": "0.6.9",
-      "author": "Windy-X211",
-      "name": "桌宠控制",
-      "description": "控制 Live2D 桌宠：多模型同屏、显示隐藏、位置缩放、捏脸参数、流式动画、模型动画与表情、动作配音（含唱歌）、鼠标跟随",
-      "icon": "🐱",
-      "tags": [
-        "desktop",
-        "live2d",
-        "pet",
-        "animation",
-        "stream",
-        "motion",
-        "expression",
-        "audio",
-        "multi-model"
-      ],
-      "versions": [
-        {
-          "kind": "plugin",
-          "id": "desktop_pet",
-          "dir": "plugins/desktop_pet",
-          "updated_at": "2026-11-22T10:05:08",
-          "version": "0.6.9",
-          "author": "Windy-X211",
-          "name": "桌宠控制",
-          "description": "控制 Live2D 桌宠：多模型同屏、显示隐藏、位置缩放、捏脸参数、流式动画、模型动画与表情、动作配音（含唱歌）、鼠标跟随",
-          "icon": "🐱",
-          "tags": [
-            "desktop",
-            "live2d",
-            "pet",
-            "animation",
-            "stream",
-            "motion",
-            "expression",
-            "audio",
-            "multi-model"
-          ]
-        },
-        {
-          "kind": "plugin",
-          "id": "desktop_pet",
-          "dir": "plugins/desktop_pet@0.4.0",
-          "updated_at": "2026-11-06T20:25:49",
-          "version": "0.4.0",
-          "author": "Windy-X211",
-          "name": "桌宠控制",
-          "description": "控制 Live2D 桌宠：显示隐藏、位置大小、捏脸参数平滑过渡、流式参数动画（低延迟）",
-          "icon": "🐱",
-          "tags": [
-            "desktop",
-            "live2d",
-            "pet",
-            "animation",
-            "stream"
-          ]
-        }
       ]
     },
     {

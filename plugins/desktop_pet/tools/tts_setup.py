@@ -52,19 +52,51 @@ def run(cmd, **kw):
     return subprocess.run(cmd, check=True, **kw)
 
 
+_JSON = False
+
+
+def emit(stage: str, pct: int | None = None, message: str = "") -> None:
+    """给宿主（AgentCluster 依赖安装器）读的进度行：单行 JSON。"""
+    if not _JSON:
+        return
+    print(json.dumps({"stage": stage, "pct": pct, "message": message}, ensure_ascii=False), flush=True)
+
+
 # ---------------------------------------------------------------- install
 def install():
     venv_dir = VENV_PY.parent.parent
+    marker = venv_dir / ".setup_ok"
+    if marker.is_file():
+        # 幂等：上次已经装成功过 → 只做一次快速导入自检，通过就直接返回
+        try:
+            r = subprocess.run([str(VENV_PY), "-c", "import qwen_tts, torch, librosa"],
+                               capture_output=True, text=True, timeout=120)
+            if r.returncode == 0:
+                print("私有 venv 已就绪（%s），跳过安装" % venv_dir, flush=True)
+                emit("done", 100, "已就绪，跳过")
+                return
+        except Exception:
+            pass
+        marker.unlink(missing_ok=True)
+
     if not VENV_PY.is_file():
-        print("创建 venv: %s" % venv_dir)
+        print("创建 venv: %s" % venv_dir, flush=True)
+        emit("venv", 5, "创建私有 venv")
         run([HOST_PY, "-m", "venv", "--system-site-packages", str(venv_dir)])
     py = str(VENV_PY)
 
+    emit("pip", 15, "升级 pip")
     run([py, "-m", "pip", "install", "--upgrade", "pip", "-q"])
+    emit("pip", 30, "安装基础依赖（约 170MB）")
     run([py, "-m", "pip", "install", "-q"] + PIP_PKGS)
+    emit("pip", 85, "安装 qwen-tts（--no-deps 避免降级宿主 transformers）")
     # qwen-tts 的依赖里 transformers 版本被锁死，这里只装它自己
     run([py, "-m", "pip", "install", "-q", "--no-deps", QWEN_PKG])
-    print("依赖安装完成")
+
+    # 只有真正装完才写标记：宿主以 marker 判定"这个资产已就位"
+    marker.write_text("ok\n", encoding="utf-8")
+    print("依赖安装完成", flush=True)
+    emit("done", 100, "依赖安装完成")
 
 
 # ---------------------------------------------------------------- download
@@ -146,15 +178,20 @@ def check(model_dir: str, synth: bool = False):
 
 
 def main():
+    global _JSON
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--install", action="store_true")
     ap.add_argument("--download", action="store_true")
     ap.add_argument("--synth", action="store_true", help="自检时跑一次真实合成")
+    ap.add_argument("--json", action="store_true",
+                    help="按行输出 JSON 进度（供宿主的依赖安装器读取）")
     ap.add_argument("--model-dir", default="")
     ap.add_argument("--variant", choices=list(VARIANTS), default="custom_voice")
     ap.add_argument("--revision", default="master")
     args = ap.parse_args()
+
+    _JSON = bool(args.json)
 
     model_dir = args.model_dir or str((load_config().get("local") or {}).get("model_dir") or DEFAULT_MODEL_DIR)
 

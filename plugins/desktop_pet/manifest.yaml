@@ -1,4 +1,4 @@
-version: "0.6.9"
+version: "0.8.7"
 type: "plugin"
 name: "desktop_pet"
 label:
@@ -11,7 +11,36 @@ description:
 icon: "🐱"
 tags: ["desktop", "live2d", "pet", "animation", "stream", "motion", "expression", "audio", "multi-model"]
 
+# 依赖说明：
+#   pip    —— 覆盖层窗口与 Qt WebEngine 兜底渲染
+#   assets —— 真正"重"的部分：Electron 运行时（282MB 解压后，压缩包 115MB）
+#             和 TTS 私有 venv。这两样都放不进市场 git 仓库（单文件 >100MiB 会被
+#             GitHub 拒推），因此挂 AgentCluster-Market 的 Release，由宿主自动下载。
+#             生成/上传资产包：python tools/build_release.py --upload --tag assets-v1
 dependencies:
   pip:
     - "PyQt5>=5.15.9"
     - "PyQtWebEngine>=5.15.7"
+  assets:
+    # 必需：没有它就只能退回 Qt WebEngine 的 color-key 抠黑底渲染（边缘发毛、性能差）
+    - id: "electron_runtime"
+      kind: "zip"
+      url: "https://github.com/Windy-X211/AgentCluster-Market/releases/download/assets-v1/electron_runtime-win32-x64.zip"
+      sha256: "ac890ab88018a59cf56ffd2f39cf50484bbd3d0c3e000f779e7bb504321c03e3"
+      size: 120283181
+      target: "electron_runtime"
+      marker: "electron_runtime/Hime Display.exe"
+      strip_root: true
+      optional: false
+
+    # 可选：TTS 配音环境（私有 venv，装不上就静音，不影响桌宠本体）
+    # 首次调 speak 时也会提示，可在「能力管理 → 依赖安装」里随时补装
+    - id: "tts_env"
+      kind: "script"
+      entry: "tools/tts_setup.py"
+      args: ["--install", "--json"]
+      marker: "_tts_env/.setup_ok"
+      target: "_tts_env"
+      optional: true
+      est_size: 176160768
+      timeout: 1800

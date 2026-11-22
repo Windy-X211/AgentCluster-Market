@@ -2277,8 +2277,31 @@ class DesktopPetWindow:
         # frame = 旧版离屏 readPixels + HTTP 回传 + QPainter 绘制（保留回退）。
         _render_mode = (os.environ.get("PET_RENDER_MODE") or "electron").strip().lower()
         _electron_runtime = os.path.join(_PLUGIN_DIR, "electron_runtime", "Hime Display.exe")
+        _require_electron = (os.environ.get("PET_REQUIRE_ELECTRON") or "0").strip() in ("1", "true", "yes")
         if _render_mode in ("auto", "electron") and not os.path.exists(_electron_runtime):
+            # 以前这里是**静默**降级：缺 Electron 运行时就直接走 Qt 的 color-key 渲染，
+            # 用户以为装好了，实际画面边缘发毛、性能也差一档。现在改成：
+            #   1) 一定要在日志里大声说明（便于在"插件日志"里查）；
+            #   2) 把状态记进 _WSTATE，`/state` 与工具回包能看到；
+            #   3) 除非显式 PET_REQUIRE_ELECTRON=1，否则仍然降级（不阻断使用），
+            #      但会在首次 show 的回包里给出可操作提示。
+            _WSTATE["electron_missing"] = True
+            print("[pet] " + "=" * 62, flush=True)
+            print("[pet] ⚠ 缺少 Electron 运行时：%s" % _electron_runtime, flush=True)
+            print("[pet]   已降级为 Qt WebEngine 渲染（color-key 抠黑底：边缘可能有毛边、"
+                  "性能较低、透明度不如原生）", flush=True)
+            print("[pet]   修复：能力管理 → 依赖安装 → 重新扫描/安装依赖（会自动下载约 115MB）；"
+                  "或设 PET_REQUIRE_ELECTRON=1 让它直接报错而不是降级", flush=True)
+            print("[pet] " + "=" * 62, flush=True)
+            if _require_electron:
+                raise RuntimeError(
+                    "缺少 Electron 运行时（%s）。请在 能力管理 → 依赖安装 里安装该插件的"
+                    "文件型依赖，或删除环境变量 PET_REQUIRE_ELECTRON 以允许降级渲染。"
+                    % _electron_runtime
+                )
             _render_mode = "direct"
+        else:
+            _WSTATE.pop("electron_missing", None)
         _electron_mode = _render_mode == "electron"
         _direct_mode = _render_mode != "frame"
         # 鼠标事件排障：PET_MOUSE_LOG=1 时把按下/拖动写进 worker 日志
@@ -3419,6 +3442,36 @@ class DesktopPetWindow:
                         self._mask_key = key
                     return False
                 pw, ph = self.width(), self.height()
+                # 抓帧几何 → 当前几何的换算基准：**以 Stage 中心为锚、按 Stage 高度
+                # 等比缩放**（两轴共用一个比例 k）。
+                #
+                # 直出模式里 applyFit 只用 Stage 高度决定模型缩放
+                # （fitScale = stage.h / baseH * 0.95），模型画在 Stage 中心；
+                # Stage 宽度只决定左右留白，而且会随模型宽高比变（换模型/补宽缓动
+                # 时"高度不变、宽度变了"很常见）。旧实现按 Stage 左上角为锚、
+                # 横向用 cur_w/cap_w、纵向用 cur_h/cap_h 各算一个比例：一旦这两个
+                # 比例不相等，整块剪影就被横竖不等地拉一遍，模型上大片看得见的
+                # 部位落不进命中区 —— 用户看到的就是"一些可见部分点下去穿透到
+                # 下面的窗口"。中心锚 + 单一 k 才和渲染层的实际布局一致。
+                _st_now = pet.stage_rect()
+
+                def _stage_xform(ref):
+                    """返回 (k, 抓帧中心x, 抓帧中心y, 当前中心x, 当前中心y)；坏几何给 None。"""
+                    try:
+                        if not ref or len(list(ref)) < 4:
+                            return None
+                        rx, ry, rw_, rh_ = [float(v) for v in list(ref)[:4]]
+                        if rw_ < 2 or rh_ < 2:
+                            return None
+                        k = float(_st_now[3]) / rh_
+                        if not (0.02 < k < 50.0):
+                            return None
+                        return (k, rx + rw_ * 0.5, ry + rh_ * 0.5,
+                                float(_st_now[0]) + float(_st_now[2]) * 0.5,
+                                float(_st_now[1]) + float(_st_now[3]) * 0.5)
+                    except (TypeError, ValueError, IndexError):
+                        return None
+
                 mask = state.get("alpha_mask")
                 # 字幕几何必须在这里现算（不依赖上一帧的 _sub_rect）：
                 # 掩膜 = 模型剪影 ∪ 字幕条，算早算晚差一帧就会把字幕裁掉/留下残块。
@@ -3491,14 +3544,11 @@ class DesktopPetWindow:
                 _rcsx = _rcsy = 0.0
                 _rstx = _rsty = 0.0
                 try:
-                    _cs = state.get("_cm_stage")
-                    _st = pet.stage_rect()
-                    if _cs and len(_cs) >= 4:
-                        _rcsx, _rcsy = float(_cs[0]), float(_cs[1])
-                        _rstx, _rsty = float(_st[0]), float(_st[1])
-                        if float(_cs[2]) > 1 and float(_cs[3]) > 1:
-                            _rsx = float(_st[2]) / float(_cs[2])
-                            _rsy = float(_st[3]) / float(_cs[3])
+                    _xf_s = _stage_xform(state.get("_cm_stage"))
+                    if _xf_s:
+                        _rsx = _rsy = _xf_s[0]
+                        _rcsx, _rcsy = _xf_s[1], _xf_s[2]
+                        _rstx, _rsty = _xf_s[3], _xf_s[4]
                 except Exception:
                     _rsx = _rsy = 1.0
                 if state.get("dblclick", True):
@@ -3572,37 +3622,18 @@ class DesktopPetWindow:
                     cell_nw = cell_nh = 0.0
                 full_mode = str(state.get("display_mode") or "local") == "full"
                 # 格子是按"发布那一刻的 Stage 几何"算出来的；而 Stage 会被拖动（平移）
-                # 和滚轮缩放（缩放）改掉，热区重算是防抖后才跑的。
+                # 和滚轮缩放（缩放）改掉，换模型时宽度还会按新模型的宽高比重算
+                # （高度不变），热区重算是防抖后才跑的。
                 # 这里必须按 Stage 的**平移 + 缩放**一起把格子映射过去：
                 # 只做平移时，滚轮放大之后模型长出来了、命中区还停在旧尺寸，
                 # 光标落在放大后新长出的地方就会被判成"在模型外" —— 表现是
                 # 缩放后点不动/拖不动，而且模型上的滚轮会穿透到下面的窗口。
+                # 换算基准由 _stage_xform 统一给出（中心锚 + 按高度等比）。
                 seq = int(state.get("_cm_seq") or 0)
-                dxn = dyn = 0.0     # 兼容旧字段：像素偏移（仅平移）
-                sxn = syn = 1.0     # 缩放比（当前 Stage / 发布时的 Stage）
-                csx = csy = 0.0     # 发布时 Stage 原点（屏幕像素）
-                stx = sty = 0.0     # 当前 Stage 原点（屏幕像素）
-                csw = csh = 0.0     # 发布时 Stage 尺寸
-                try:
-                    _cs = state.get("_cm_stage")
-                    _st = pet.stage_rect()
-                    if _cs and len(_cs) >= 4:
-                        csx, csy = float(_cs[0]), float(_cs[1])
-                        csw, csh = float(_cs[2]), float(_cs[3])
-                        stx, sty = float(_st[0]), float(_st[1])
-                        dxn = (stx - csx) / float(pw)
-                        dyn = (sty - csy) / float(ph)
-                        if csw > 1 and csh > 1 and float(_st[2]) > 1 and float(_st[3]) > 1:
-                            sxn = float(_st[2]) / csw
-                            syn = float(_st[3]) / csh
-                except Exception:
-                    dxn = dyn = 0.0
-                    sxn = syn = 1.0
+                _xf = _stage_xform(state.get("_cm_stage"))
                 if isinstance(cells, list) and len(cells) >= 8 and cell_nw > 0 and cell_nh > 0:
                     mask = {"cells": cells, "cell_nw": cell_nw, "cell_nh": cell_nh,
-                            "ver": seq, "dx": dxn, "dy": dyn,
-                            "sx": sxn, "sy": syn, "csx": csx, "csy": csy,
-                            "stx": stx, "sty": sty}
+                            "ver": seq, "xf": _xf}
                     norm = None
                 elif full_mode:
                     # 还没建出热区地图（模型刚加载）：退回 Stage 包围盒，
@@ -3614,18 +3645,30 @@ class DesktopPetWindow:
                 else:
                     mask = state.get("alpha_mask")
                     norm = state.get("model_rect_norm")
+                # 掩膜 key 里的"包围盒"分量：拖动/换位时 model_rect_norm 是
+                # 异步刷新的，只有把它算进 key，刷新回来的那一拍才会真正重建掩膜。
+                # 全屏可见模式下它同时决定 alpha 的裁框，过期框会把剪影裁空。
+                try:
+                    _nm_key = (full_mode,) + tuple(
+                        round(float(v), 4) for v in (state.get("model_rect_norm") or ()))
+                except (TypeError, ValueError):
+                    _nm_key = (full_mode,)
                 if mask and mask.get("cells"):
-                    key = ("cells", mask["ver"], round(mask["dx"], 4),
-                           round(mask["dy"], 4), round(mask.get("sx") or 1.0, 4),
-                           round(mask.get("sy") or 1.0, 4),
+                    _xf_k = tuple(round(float(v), 4) for v in (_xf or ()))
+                    # 包围盒也要进 key：模型没换、只是拖动/换位时几何量里唯一
+                    # 会被异步刷新的就是它；不进 key 就会出现"先用旧框裁、
+                    # 新框回来也不重建"，错误掩膜一直挂着（可见部位点不动）。
+                    key = ("cells", mask["ver"], _xf_k,
                            round(mask["cell_nw"], 5),
                            round(mask["cell_nh"], 5),
                            state.get("alpha_mask_ver") or 0,
+                           _nm_key,
                            pw, ph,
                            tuple(sub_rect.getRect()) if sub_rect else None,
                            ui_key, seed_key)
                 elif mask and mask.get("bits"):
                     key = ("alpha", state.get("alpha_mask_ver") or 0,
+                           _nm_key,
                            pw, ph, tuple(sub_rect.getRect()) if sub_rect else None,
                            ui_key, seed_key)
                 else:
@@ -3651,20 +3694,22 @@ class DesktopPetWindow:
                         # 前排格子 → 一格一块命中区（角色本体剪影）。
                         # 格子中心与格宽都是**画布归一化**值（渲染层 canvas 就是
                         # 整块屏幕）。格子是在"发布那一刻的 Stage"里量出来的，
-                        # 这里按 Stage 的平移 + 缩放把它搬到现在的位置：
-                        #   屏幕x = 当前Stage原点 + (格子屏幕x - 发布时Stage原点) * 缩放比
+                        # 这里按 _stage_xform 给出的基准（Stage 中心 + 高度等比 k）
+                        # 把它搬到现在的位置：
+                        #   屏幕x = 当前Stage中心x + (格子屏幕x - 抓帧Stage中心x) * k
                         # 每格外扩 1px，避免格与格之间出现 1px 的穿透缝
                         # （模型身上出现"点不到的小洞"）。
-                        _sxr = float(mask.get("sx") or 1.0) or 1.0
-                        _syr = float(mask.get("sy") or 1.0) or 1.0
-                        _csx, _csy = float(mask.get("csx") or 0.0), float(mask.get("csy") or 0.0)
-                        _stx, _sty = float(mask.get("stx") or 0.0), float(mask.get("sty") or 0.0)
-                        hw = max(2.0, mask["cell_nw"] * pw * _sxr / 2.0 + 1.0)
-                        hh = max(2.0, mask["cell_nh"] * ph * _syr / 2.0 + 1.0)
+                        _xf_m = mask.get("xf") or (1.0, 0.0, 0.0, 0.0, 0.0)
+                        try:
+                            _k, _c0x, _c0y, _c1x, _c1y = [float(v) for v in list(_xf_m)[:5]]
+                        except (TypeError, ValueError):
+                            _k, _c0x, _c0y, _c1x, _c1y = 1.0, 0.0, 0.0, 0.0, 0.0
+                        hw = max(2.0, mask["cell_nw"] * pw * _k / 2.0 + 1.0)
+                        hh = max(2.0, mask["cell_nh"] * ph * _k / 2.0 + 1.0)
                         for _c in mask["cells"]:
                             try:
-                                cxx = _stx + ((float(_c["x"]) * pw) - _csx) * _sxr
-                                cyy = _sty + ((float(_c["y"]) * ph) - _csy) * _syr
+                                cxx = _c1x + ((float(_c["x"]) * pw) - _c0x) * _k
+                                cyy = _c1y + ((float(_c["y"]) * ph) - _c0y) * _k
                             except Exception:
                                 continue
                             region = region.united(
@@ -3672,14 +3717,21 @@ class DesktopPetWindow:
                                         max(1, int(round(hw * 2))),
                                         max(1, int(round(hh * 2)))))
                     elif mask and mask.get("bits"):
+                        # 只有 alpha、还没有格子（模型刚就绪的那一小段）：
+                        # 同样按抓帧时的 Stage 搬到现在，不能当"整屏绝对坐标"用。
                         cols = int(mask.get("cols") or 0)
                         rows = int(mask.get("rows") or 0)
                         bits = mask["bits"]
                         if cols <= 0 or rows <= 0:
                             return False
+                        _xf_a = _stage_xform(mask.get("stage"))
+                        _ak, _a0x, _a0y, _a1x, _a1y = (_xf_a if _xf_a
+                                                       else (1.0, 0.0, 0.0, 0.0, 0.0))
                         for r, line in enumerate(bits[:rows]):
-                            y0 = int(round(r * ph / float(rows)))
-                            y1 = int(round((r + 1) * ph / float(rows)))
+                            _ry0 = float(r) * ph / float(rows)
+                            _ry1 = float(r + 1) * ph / float(rows)
+                            y0 = int(round(_a1y + (_ry0 - _a0y) * _ak)) - 1
+                            y1 = int(round(_a1y + (_ry1 - _a0y) * _ak)) + 1
                             if y1 <= y0:
                                 continue
                             c = 0
@@ -3717,27 +3769,53 @@ class DesktopPetWindow:
                     _am = state.get("alpha_mask") or {}
                     if _am.get("bits"):
                         try:
+                            # 剪影必须是**这一个模型**的：换模型后旧剪影是另一只
+                            # 模型的形状，并进来等于把命中区裁成别人的轮廓。
+                            _am_model = str(_am.get("model") or "")
+                            _cur_mu = str(state.get("model_url") or "")
+                            if _am_model and _cur_mu and _am_model != _cur_mu:
+                                _am = {}
                             _ar = self._region_from_alpha(_am, pw, ph)
                             if mask and mask.get("cells") and not region.isEmpty():
-                                # 并入的 alpha 只取"角色附近那一圈"：全屏可见模式
+                                # 并入的 alpha 只取"模型看得见的那一块"：全屏可见模式
                                 # 下网格里可能还有布景/特效，整幅并进来会把桌面也
                                 # 变成可点区域。
-                                _rb = region.boundingRect().adjusted(-26, -26, 26, 26)
-                                # 但"附近"必须以模型**看得见的包围盒**为准：
-                                # 格子是按 Stage 切出来的，模型比 Stage 宽时
-                                # （宽度没跟上包围盒）外扩 26px 也罩不住溢出的那
-                                # 一圈，那里就会重新变成"看得见却穿透"。
+                                #
+                                # **local 模式不裁**：alpha 网格在抓帧时就按 Stage
+                                # （= 模型的窗口）圈过 band，外面一律是 0，本来就没有
+                                # 布景可混进来。裁框反而带来一个致命副作用（实测复现）：
+                                # 拖动/换位后 model_rect_norm 还没刷新，裁框停在**旧位置**，
+                                 # 缩放后的剪影跟它没有交集 → 整块 alpha 被裁光，掩膜只剩
+                                # 那圈"前排格子"（≈剪影一半），模型上大片看得见的部位
+                                # 一点就穿透；而 _mask_key 里又没有包围盒，等包围盒刷新
+                                # 回来也不会重建，错误掩膜就那么一直挂着，直到下一次缩放
+                                # 才意外恢复。
+                                _rb = None
                                 _norm = state.get("model_rect_norm")
-                                if _norm and len(_norm) == 4:
+                                if full_mode and _norm and len(_norm) == 4:
+                                    # 全屏可见模式才需要"别把桌面并进来"的裁框；
+                                    # 而且必须确认这份包围盒是**当前 Stage** 量的，
+                                    # 过期就宁可先不裁，也不能拿旧框把剪影裁没。
+                                    _fresh = True
                                     try:
-                                        _nx, _ny, _nw, _nh = [float(v) for v in _norm]
-                                        _rb = _rb.united(QRegion(
-                                            int(_nx * pw) - 8, int(_ny * ph) - 8,
-                                            max(1, int(_nw * pw) + 16),
-                                            max(1, int(_nh * ph) + 16)))
-                                    except (TypeError, ValueError):
-                                        pass
-                                _ar = _ar.intersected(QRegion(_rb))
+                                        _org = state.get("model_rect_stage")
+                                        if _org and (abs(int(_org[0]) - int(_st_now[0])) > 8
+                                                     or abs(int(_org[1]) - int(_st_now[1])) > 8):
+                                            _fresh = False
+                                    except (TypeError, ValueError, IndexError):
+                                        _fresh = True
+                                    if _fresh:
+                                        try:
+                                            _nx, _ny, _nw, _nh = [float(v) for v in _norm]
+                                            _rb = QRegion(
+                                                int(round(_nx * pw)) - 20,
+                                                int(round(_ny * ph)) - 20,
+                                                max(1, int(round(_nw * pw)) + 40),
+                                                max(1, int(round(_nh * ph)) + 40))
+                                        except (TypeError, ValueError):
+                                            _rb = None
+                                if _rb is not None:
+                                    _ar = _ar.intersected(_rb)
                             region = region.united(_ar)
                         except Exception:
                             pass
@@ -3784,10 +3862,14 @@ class DesktopPetWindow:
 
                 网格列/行是**整块画布归一化**（渲染层 canvas 就是整块屏幕），
                 但打点是"抓帧那一刻的 Stage"里量出来的，所以这里和 cells 用
-                同一套映射：
-                    屏幕x = 当前Stage原点 + (网格屏幕x - 抓帧时Stage原点) * 缩放比
-                不映射的话，拖动/滚轮缩放之后剪影就停在原地 —— 那正是
-                "模型有时被鼠标穿透"的来源。
+                同一套映射（见 _apply_interaction_mask 里的 _stage_xform）：
+                    k    = 当前Stage高 / 抓帧时Stage高
+                    屏幕x = 当前Stage中心x + (网格屏幕x - 抓帧Stage中心x) * k
+                两轴共用一个 k、以 Stage 中心为锚 —— 渲染层 applyFit 就是"按
+                Stage 高度定缩放、把模型画在 Stage 中心"，Stage 宽度只是左右留白。
+                旧实现按左上角为锚、横纵各用一个宽高比：换模型/补宽时宽度和高度
+                的比例不同，剪影就被横竖不等地拉一遍，命中区不再贴着模型 ——
+                那正是"模型有时被鼠标穿透"的来源。
                 """
                 region = QRegion()
                 try:
@@ -3796,21 +3878,26 @@ class DesktopPetWindow:
                     bits = am.get("bits") or []
                     if cols <= 0 or rows <= 0 or not bits:
                         return region
-                    _csx = _csy = 0.0
-                    _csw = _csh = 0.0
                     a_st = am.get("stage") or state.get("stage_rect") or None
-                    if a_st and len(a_st) >= 4:
-                        _csx, _csy = float(a_st[0]), float(a_st[1])
-                        _csw, _csh = float(a_st[2]), float(a_st[3])
                     _st = self.stage_rect()
-                    _stx, _sty = float(_st[0]), float(_st[1])
-                    sxr = (float(_st[2]) / _csw) if _csw > 1 else 1.0
-                    syr = (float(_st[3]) / _csh) if _csh > 1 else 1.0
+                    _kr = 1.0
+                    _c0x = _c0y = _c1x = _c1y = 0.0
+                    if a_st and len(list(a_st)) >= 4:
+                        try:
+                            _rx, _ry, _rw, _rh = [float(v) for v in list(a_st)[:4]]
+                            if _rw >= 2 and _rh >= 2 and float(_st[3]) >= 2:
+                                _kr = float(_st[3]) / _rh
+                                _c0x, _c0y = _rx + _rw * 0.5, _ry + _rh * 0.5
+                                _c1x = float(_st[0]) + float(_st[2]) * 0.5
+                                _c1y = float(_st[1]) + float(_st[3]) * 0.5
+                        except (TypeError, ValueError, IndexError):
+                            _kr = 1.0
+                            _c0x = _c0y = _c1x = _c1y = 0.0
                     for r, line in enumerate(bits[:rows]):
                         cy0 = r * ph / float(rows)
                         cy1 = (r + 1) * ph / float(rows)
-                        y0 = int(round(_sty + (cy0 - _csy) * syr))
-                        y1 = int(round(_sty + (cy1 - _csy) * syr))
+                        y0 = int(round(_c1y + (cy0 - _c0y) * _kr))
+                        y1 = int(round(_c1y + (cy1 - _c0y) * _kr))
                         if y1 <= y0:
                             continue
                         c = 0
@@ -3823,8 +3910,8 @@ class DesktopPetWindow:
                                 c += 1
                             cx0 = start * pw / float(cols)
                             cx1 = c * pw / float(cols)
-                            x0 = int(round(_stx + (cx0 - _csx) * sxr)) - 1
-                            x1 = int(round(_stx + (cx1 - _csx) * sxr)) + 1
+                            x0 = int(round(_c1x + (cx0 - _c0x) * _kr)) - 1
+                            x1 = int(round(_c1x + (cx1 - _c0x) * _kr)) + 1
                             if x1 > x0:
                                 region = region.united(
                                     QRegion(x0, y0 - 1, x1 - x0, (y1 - y0) + 2))
@@ -4466,9 +4553,11 @@ class DesktopPetWindow:
             剪影格子、alpha 网格的热区、双击热区种子全都按"发布那一刻的 Stage
             几何"量出来，但坐标本身是**整块画布归一化**的；_apply_interaction_mask
             每帧都会按
-                屏幕x = 当前Stage原点 + (格子画布x - 发布时Stage原点) × 缩放比
-            把它们搬到现在的 Stage 位置 —— 平移和缩放都在同一套映射里，所以只要
-            模型身份没变，一次抓帧就能一直用下去。
+                屏幕x = 当前Stage中心x + (格子画布x - 发布时Stage中心x) × k
+            （k = 当前Stage高 / 发布时Stage高，两轴共用一个 k）把它们搬到现在
+            的 Stage 位置 —— 渲染层就是"按 Stage 高度定模型缩放、把模型画在 Stage
+            中心"，所以**同一个模型**一次抓帧就能一直用下去（拖动、缩放都在同一套
+            映射里）。换模型则必须重抓：另一只模型的轮廓长度不一样。
 
             旧实现只认"尺寸差 ≤2px"（纯平移），缩放一结束就重抓一帧 + 重建热区：
             readPixels 是同步 GPU→CPU，滚动缩放的收尾正好撞进这条路，表现就是
@@ -4478,16 +4567,34 @@ class DesktopPetWindow:
                 if (os.environ.get("PET_NO_GEOM_SKIP") or "").strip() in ("1", "true", "yes"):
                     return False      # 诊断开关：强制走完整重算做对照
                 cm = state.get("_cm_stage")
-                am = (state.get("alpha_mask") or {}).get("stage")
+                _am_obj = state.get("alpha_mask") or {}
+                am = _am_obj.get("stage")
                 if not state.get("_cm_cells") or not am:
                     return False
-                if str(state.get("_cm_model") or "") != str(state.get("model_url") or ""):
+                _mu = str(state.get("model_url") or "")
+                if str(state.get("_cm_model") or "") != _mu:
+                    return False
+                # alpha 剪影也必须是**这一个模型**的：旧剪影留着会被当成新模型的
+                # 轮廓用，命中区就整体错位（可见部位穿透）。没打过标记的旧数据
+                # （老版本抓的）一律视为不可复用，重抓一次最稳。
+                if str(_am_obj.get("model") or "") != _mu:
                     return False
                 for ref in (cm, am):
                     if not ref or len(list(ref)) != 4:
                         return False
-                    # 只挡住明显坏掉的几何（0/负尺寸），不再要求"和当前 Stage 等宽等高"
+                    # 只挡住明显坏掉的几何（0/负尺寸）
                     if float(list(ref)[2]) < 2 or float(list(ref)[3]) < 2:
+                        return False
+                # Stage **尺寸**变了就必须重抓：尺寸一变，模型按 Stage 高度重新
+                # 缩放、Stage 变宽还会露出原先被裁掉的一圈（"补宽缓动"就是这个
+                # 场景：模型先按窄 Stage 显示、随后 Stage 拉宽，左右补出新的实体）。
+                # 旧抓帧的剪影里根本没有那一圈，靠等比搬只能把"旧的一圈"摆对，
+                # 新露出来的部位仍然是空的 —— 那边点下去就穿透。
+                # 纯平移（尺寸没变）可以放心复用：换算退化成"整体平移"。
+                _st_now = pet.stage_rect()
+                for ref in (cm, am):
+                    if (abs(float(list(ref)[2]) - float(_st_now[2])) > 2
+                            or abs(float(list(ref)[3]) - float(_st_now[3])) > 2):
                         return False
                 return True
             except Exception:
@@ -5059,13 +5166,36 @@ class DesktopPetWindow:
             if not _direct_mode or page is None:
                 return
 
+            def _alpha_retry():
+                """抓帧失败（页面刚重建、GL 上下文还没画过一帧）→ 过一会儿再抓。
+
+                旧实现只在"模型就绪"那一刻抓一次，抓不到就永远留着一份**上一次
+                的**剪影：模型/几何都换了，命中区却还是旧轮廓 —— 表现就是模型上
+                大片看得见的部位鼠标穿透。失败重试几次，保证每只新模型最终都有
+                自己的剪影。
+                """
+                try:
+                    _try = int(state.get("_alpha_try") or 0) + 1
+                except (TypeError, ValueError):
+                    _try = 1
+                state["_alpha_try"] = _try
+                if _try > 6 or not state.get("ready"):
+                    return
+                try:
+                    _hit_refresh_timer.start(600)     # 防抖计时器会重新走一次抓帧
+                    state["_geom_stale"] = True
+                except Exception:
+                    pass
+
             def _cb(res):
                 try:
                     data = json.loads(res) if isinstance(res, str) else (res or {})
                     if not isinstance(data, dict) or not data.get("ok"):
+                        _alpha_retry()
                         return
                     bits = data.get("bits")
                     if not isinstance(bits, list) or not bits:
+                        _alpha_retry()
                         return
                     _stg = data.get("stage")
                     try:
@@ -5083,11 +5213,15 @@ class DesktopPetWindow:
                         # 命中区偏移（松手后模型看得见、却点不到也右键不到）。
                         "stage": (_stg if (_stg and len(_stg) == 4 and _stg[2] > 1)
                                   else list(pet.stage_rect())),
+                        # 这份剪影属于哪一个模型：换模型后旧剪影必须作废，
+                        # 否则会把命中区裁成上一只模型的轮廓（可见部位点不动）。
+                        "model": str(state.get("model_url") or ""),
                     }
                     state["alpha_mask_ver"] = int(state.get("alpha_mask_ver") or 0) + 1
                     state["_mask_dirty"] = True
+                    state["_alpha_try"] = 0
                 except (TypeError, ValueError):
-                    pass
+                    _alpha_retry()
                 finally:
                     state["_alpha_busy"] = False
 
@@ -5100,7 +5234,7 @@ class DesktopPetWindow:
                     f"setPetCommand({json.dumps({'type': 'getAlphaMask', 'cols': 200, 'rows': 160})})",
                     _cb)
             except Exception:
-                pass
+                state["_alpha_busy"] = False
 
         def _on_model_ready():
             _loading_timeout.stop()
@@ -5405,6 +5539,21 @@ class DesktopPetWindow:
             _cur_model["arg"] = model_url_arg
             _cur_model["scale"] = scale_arg
             state["model_url"] = str(model_url_arg)
+            # 换模型 = 剪影/格子全部作废。它们是**上一只模型**的形状：
+            # 旧的 alpha 网格 + 旧的热区格子留着，只会被搬成新模型的轮廓，
+            # 命中区就缩成一小团，新模型上大片看得见的部位点下去会穿透到桌面
+            # （这正是"模型一些可见部分鼠标穿透"的主因）。清空后由
+            # _refresh_hit_geometry → _request_alpha_mask / _build_click_map
+            # 重新抓一帧属于新模型的剪影。
+            state["alpha_mask"] = None
+            state["alpha_mask_ver"] = int(state.get("alpha_mask_ver") or 0) + 1
+            state["_alpha_try"] = 0
+            state["_cm_cells"] = 0
+            state["_cm_model"] = ""
+            state["_cm_stage"] = None
+            state["_cm_seq"] = int(state.get("_cm_seq") or 0) + 1
+            state["_mask_dirty"] = True
+            state["_geom_stale"] = True
             try:
                 _apply_model_display_mode(model_url_arg)
             except Exception:
